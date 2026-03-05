@@ -1,4 +1,4 @@
-from cmr_etl_lib.document import Document
+from ddp_lib.document import Document
 
 
 class AuditTrail(Document):

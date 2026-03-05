@@ -1,6 +1,6 @@
 from functools import wraps
 from flask import request
-from cmr_etl_lib.auth.auth_helper import AuthHelper
+from ddp_lib.auth.auth_helper import AuthHelper
 
 ROUTES_TO_SKIP = [
     "/auth/login",

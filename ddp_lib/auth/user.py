@@ -2,8 +2,8 @@ import datetime
 import inject
 import jwt
 import os
-from cmr_etl_lib.auth.black_list_token import BlacklistToken
-from cmr_etl_lib.document import Document
+from ddp_lib.auth.black_list_token import BlacklistToken
+from ddp_lib.document import Document
 from flask_bcrypt import Bcrypt
 
 

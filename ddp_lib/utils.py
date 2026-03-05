@@ -167,7 +167,7 @@ def fetch_objectives_with_details(
             }
         }
     """
-    from cmr_etl_lib.document import Document
+    from ddp_lib.document import Document
 
     objectives_collection = Document.get_collection(objective_table)
     engagements_collection = Document.get_collection(engagement_table)

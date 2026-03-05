@@ -1,4 +1,4 @@
-from cmr_etl_lib.auth.user import User
+from ddp_lib.auth.user import User
 
 class AuthHelper:
     

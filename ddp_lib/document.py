@@ -2,7 +2,7 @@ import inject
 from flask_pymongo import PyMongo
 from flask import g
 
-from cmr_etl_lib.utils import generate_id
+from ddp_lib.utils import generate_id
 
 
 class Document:
