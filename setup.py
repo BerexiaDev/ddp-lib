@@ -15,7 +15,7 @@ setup(
     ],
     author='Berexia dev',
     author_email='berexiadev@berexia.com',
-    description='CMR ETL Global Library',
+    description='Deepkube Data Platform Global Library',
     long_description=open('README.md').read(),
     long_description_content_type='text/markdown',
     classifiers=[
