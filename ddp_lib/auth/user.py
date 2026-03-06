@@ -89,7 +89,7 @@ class User(Document):
         """
         try:
             key = os.getenv("SECRET_KEY")
-            payload = jwt.decode(auth_token, key)
+            payload = jwt.decode(auth_token, key, algorithms=['HS256'])
             is_blacklisted_token = BlacklistToken.check_blacklist(auth_token)
             if is_blacklisted_token:
                 return {
