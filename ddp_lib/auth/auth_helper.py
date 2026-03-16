@@ -1,5 +1,5 @@
 from ddp_lib.auth.user import User
-
+from flask import g
 class AuthHelper:
     
     @staticmethod
@@ -10,6 +10,7 @@ class AuthHelper:
             resp = User.decode_auth_token(auth_token)
             if not isinstance(resp, str):
                 user = User().load({'_id':resp['token']})
+                g.user = user
                 response_object = {
                     'status': 'success',
                     'data': {
@@ -37,23 +38,3 @@ class AuthHelper:
                 'message': 'Provide a valid auth token.'
             }
             return response_object, 401
-    
-    @staticmethod
-    def get_logged_in_user_from_token(token):
-        resp = User.decode_auth_token(token)
-        if not isinstance(resp, str):
-            user = User().load({'_id':resp['token']})
-            response_object = {
-                'status': 'success',
-                'data': {
-                    'id': user.id,
-                    'email': user.email,
-                    'full_name': user.full_name,
-                    'is_active': user.is_active,
-                    'references': user.references,
-                    'process': user.process,
-                    'created_on': str(user.created_on),
-                    'role': user.role
-                }
-            }
-            return response_object
