@@ -23,6 +23,7 @@ class AppModuleEnum(Enum):
     DATAMART_LOGS = 'DATAMART_LOGS'
     QUEUE = 'QUEUE'
     DATA_ENGINEERING = 'DATA_ENGINEERING'
+    PROJECTS = 'PROJECTS'
 
 class UserActionEnum(Enum):
     READ = 'READ'
@@ -175,3 +176,16 @@ class Priority(Enum):
     MEDIUM = "MEDIUM"
     HIGH = "HIGH"
     CRITICAL = "CRITICAL"
+
+
+class ProjectStatus(Enum):
+    DRAFT = "DRAFT"
+    READY = "READY"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+
+class ProjectSourceType(Enum):
+    REFERENCE = "REFERENCE"
+    CLEANED_TABLE = "CLEANED_TABLE"
+    POPULATION = "POPULATION"
