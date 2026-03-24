@@ -184,6 +184,7 @@ class ProjectStatus(Enum):
     IN_PROGRESS = "IN_PROGRESS"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
+    PAUSED = "PAUSED"
 
 class ProjectSourceType(Enum):
     REFERENCE = "REFERENCE"
