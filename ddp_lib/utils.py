@@ -1,3 +1,4 @@
+import json
 import uuid
 
 
@@ -237,3 +238,8 @@ def load_entities(data, collection):
             entity_dict.get(entity_id) for entity_id in doc.entities or []
         ]
     return data
+
+def serialize_if_needed(value):
+    if isinstance(value, (dict, list)):
+        return json.dumps(value)
+    return value
