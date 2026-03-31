@@ -1,3 +1,4 @@
+import json
 import re
 from datetime import datetime
 
@@ -22,6 +23,12 @@ def build_filters(filters):
     :return: MongoDB query as a dictionary.
     """
     mongo_query = {}
+
+    if isinstance(filters, str):
+        try:
+            filters = json.loads(filters) if filters else []
+        except (TypeError, ValueError):
+            filters = []
 
     for filter_item in filters:
         # Extract filter components
