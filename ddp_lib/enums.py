@@ -190,3 +190,16 @@ class ProjectSourceType(Enum):
     REFERENCE = "REFERENCE"
     CLEANED_TABLE = "CLEANED_TABLE"
     POPULATION = "POPULATION"
+
+
+class DatabaseType(Enum):
+    POSTGRES = "postgres"
+    MONGODB = "mongo"
+    ORACLE = "oracle"
+    SQLSERVER = "sqlserver"
+    INFORMIX = "informix"
+
+class ProjectTargetMode(Enum):
+    APPEND = "APPEND"
+    UPSERT = "UPSERT"
+    CREATE = "CREATE"
