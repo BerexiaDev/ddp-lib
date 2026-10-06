@@ -22,7 +22,7 @@ This installs the package with all its dependencies. Use underscores for imports
 
 | Area | Python | Main requirements |
 | --- | --- | --- |
-| API and audit services | CPython 3.10–3.12 | Flask 2.2.5–3.x, Flask-RESTX 1.3.x, Flask-PyMongo 2.x, PyMongo 3.x |
+| API and audit services | CPython 3.10–3.12 | Flask 2.2.5–3.x, Flask-RESTX 1.2.0, Flask-PyMongo 2.x, PyMongo 3.x |
 | Authentication | CPython 3.10–3.12 | PyJWT 2.8–2.x, Flask-Bcrypt 1.x |
 | Workers and sync | CPython 3.10–3.12 | ddp-connectors 0.2.x (it needs ddp-lib 0.2.x) |
 
