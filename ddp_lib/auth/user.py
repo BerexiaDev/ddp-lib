@@ -5,7 +5,6 @@ import os
 from ddp_lib.auth.black_list_token import BlacklistToken
 from ddp_lib.document import Document
 from flask_bcrypt import Bcrypt
-from flask import current_app as app
 
 
 class User(Document):
@@ -41,7 +40,7 @@ class User(Document):
 
     @staticmethod
     def _secret_key():
-        key = app.config["SECRET_KEY"]
+        key = os.getenv("SECRET_KEY")
         if not key:
             raise ValueError("SECRET_KEY must be configured for token operations")
         return key
