@@ -110,7 +110,7 @@ class AuditBlueprint(Blueprint):
             "action": action,
             "endpoint": endpoint,
             "user": {
-              "id": user_info.get("id"),
+              "id": user_info.get("id", user_info.get("_id")),
               "email": user_info.get("email"),
               "full_name": user_info.get("full_name")
             },
