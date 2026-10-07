@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ddp-lib"
+version = "0.2.0"
+description = "Canonical DeepKube shared application library"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [{name = "Berexia DEV Team", email = "berexiadev@berexia.com"}]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "cryptography==44.0.2",
+    "flask-restx==1.2.0",
+    "inject==5.0.0",
+    "python-dotenv==0.21.1",
+    "PyJWT==2.8.0",
+    "loguru==0.6.0",
+    "Flask-Bcrypt==1.0.1",
+    "Flask>=2.2.5,<3",
+    "Flask-PyMongo>=2.3,<3",
+    "pymongo>=3.10.1,<4",
+]
+
+[tool.setuptools.packages.find]
+include = ["ddp_lib*"]
