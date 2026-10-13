@@ -20,12 +20,8 @@ ROUTES_TO_SKIP = [
 ]
 
 
-def token_required(roles=None, *, strict=False):
-    """Authenticate requests, optionally enforcing strict helper/empty-role checks.
-
-    Existing calls retain their behavior. With strict=True, roles=None means
-    any authenticated user and roles=[] means no permitted roles.
-    """
+def token_required(roles=None):
+    """Authenticate requests; roles=None allows any user, roles=[] denies all."""
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
@@ -38,12 +34,8 @@ def token_required(roles=None, *, strict=False):
                     return {"message": "Token is missing"}, 401
 
                 # Fetch logged-in user data
-                data, status = (
-                    AuthHelper.get_logged_in_user(request, strict=True)
-                    if strict else AuthHelper.get_logged_in_user(request)
-                )
+                data, status = AuthHelper.get_logged_in_user(request)
 
-                # Log the URL and token
                 if status != 200:
                     return {"message": "Invalid token"}, 401
 
@@ -52,7 +44,7 @@ def token_required(roles=None, *, strict=False):
                     return {"message": "Token is missing"}, 401
 
                 # Check if the token has the required role
-                if roles is None or (not strict and not roles):
+                if roles is None:
                     return f(*args, **kwargs)
 
                 user_role = token.get('role')
@@ -61,7 +53,7 @@ def token_required(roles=None, *, strict=False):
 
                 return f(*args, **kwargs)
 
-            except Exception as e:
-                return {"message": f"Authentication error: {str(e)}"}, 401
+            except Exception:
+                return {"message": "Authentication service is unavailable."}, 503
         return decorated_function
     return decorator

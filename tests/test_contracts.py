@@ -1,5 +1,4 @@
-"""Contracts used by existing consumers, including legacy auth defaults."""
-import os
+"""Contracts for Core authentication and shared application helpers."""
 import unittest
 from unittest.mock import Mock, patch
 
@@ -25,7 +24,9 @@ USER = dict(_id="user-123", email="reader@example.test", full_name="Reader",
 class AuthFixture(unittest.TestCase):
     def setUp(self):
         self.app = Flask(__name__)
-        self.enterContext(patch.dict(os.environ, {"SECRET_KEY": SECRET}))
+        self.app.config.update(SECRET_KEY=SECRET, DDP_TOKEN_ISSUER="ddp-auth",
+                               DDP_TOKEN_AUDIENCE="ddp-api")
+        self.enterContext(self.app.app_context())
         self.blacklist = Mock()
         self.blacklist.find_one.return_value = None
         self.enterContext(patch.object(BlacklistToken, "db", return_value=self.blacklist))
@@ -42,29 +43,35 @@ class AuthFixture(unittest.TestCase):
 
 class AuthContracts(AuthFixture):
     def test_token_strings_claims_lifetimes_and_decode_shape(self):
-        for encode, lifetime in [(User.encode_auth_token, 86405),
-                                 (User.encode_refresh_token, 2592000)]:
+        for encode, lifetime, token_type in [(User.encode_auth_token, 86405, "access"),
+                                             (User.encode_refresh_token, 2592000, "refresh")]:
             with self.subTest(encoder=encode.__name__):
                 token = encode("user-123")
                 self.assertIsInstance(token, str)
-                claims = jwt.decode(token, SECRET, algorithms=["HS256"])
+                claims = jwt.decode(token, SECRET, algorithms=["HS256"],
+                                    issuer="ddp-auth", audience="ddp-api")
                 self.assertEqual(claims["sub"], "user-123")
+                self.assertEqual(claims["token_type"], token_type)
+                self.assertTrue(claims["jti"])
                 self.assertEqual(claims["exp"] - claims["iat"], lifetime)
-                self.assertEqual(User.decode_auth_token(token),
-                                 {"status": "success", "token": "user-123"})
-                self.assertEqual(User.decode_auth_token(token.encode()),
-                                 {"status": "success", "token": "user-123"})
+                if token_type == "access":
+                    self.assertEqual(User.decode_auth_token(token),
+                                     {"status": "success", "token": "user-123"})
+                else:
+                    self.assertEqual(User.decode_auth_token(token)["status"], "fail")
+                self.assertEqual(User.decode_auth_token(token.encode())["status"], "fail")
 
     def test_custom_positional_token_lifetime_and_subject_are_preserved(self):
         token = User.encode_auth_token(42, 0, 20, 3)
-        claims = jwt.decode(token, SECRET, algorithms=["HS256"])
-        self.assertEqual(claims["sub"], 42)
+        claims = jwt.decode(token, SECRET, algorithms=["HS256"], audience="ddp-api")
+        self.assertEqual(claims["sub"], "42")
         self.assertEqual(claims["exp"] - claims["iat"], 200)
 
-    def test_token_errors_keep_existing_return_contract(self):
-        with patch.dict(os.environ, {}, clear=True):
-            self.assertIsInstance(User.encode_auth_token("user-123"), Exception)
-            self.assertIsInstance(User.encode_refresh_token("user-123"), str)
+    def test_invalid_config_fails_issuance_and_invalid_tokens_fail_decoding(self):
+        with patch.dict(self.app.config, {"SECRET_KEY": ""}):
+            for encode in (User.encode_auth_token, User.encode_refresh_token):
+                with self.assertRaises(ValueError):
+                    encode("user-123")
         self.assertEqual(User.decode_auth_token("broken")["status"], "fail")
         expired = User.encode_auth_token("user-123", days=-1)
         self.assertIn("expired", User.decode_auth_token(expired)["message"])
@@ -92,20 +99,57 @@ class AuthContracts(AuthFixture):
     def test_default_role_semantics_and_result_shape(self):
         token = User.encode_auth_token("user-123")
         with self.app.test_request_context("/protected", headers={"Authorization": "Bearer " + token}):
-            for roles in (None, [], ["DATA_OWNER"]):
+            for roles in (None, ["DATA_OWNER"]):
                 self.assertEqual(token_required(roles)(lambda: ({"ok": True}, 202))(),
                                  ({"ok": True}, 202))
             self.assertEqual(token_required(["ADMIN"])(lambda: None)(),
+                             ({"message": "Permission denied"}, 403))
+            self.assertEqual(token_required([])(lambda: None)(),
                              ({"message": "Permission denied"}, 403))
 
     def test_default_missing_and_invalid_token_responses(self):
         with self.app.test_request_context("/protected"):
             self.assertEqual(token_required()(lambda: None)(), ({"message": "Token is missing"}, 401))
-            with self.assertRaises(AttributeError):
-                AuthHelper.get_logged_in_user(request)
+            self.assertEqual(AuthHelper.get_logged_in_user(request)[1], 401)
         with self.app.test_request_context("/protected", headers={"Authorization": "Bearer broken"}):
             self.assertEqual(token_required()(lambda: None)(),
-                             ({"message": "Authentication error: 'token'"}, 401))
+                             ({"message": "Invalid token"}, 401))
+
+    def test_invalid_claims_are_rejected_without_an_opt_in(self):
+        token = User.encode_auth_token("user-123")
+        claims = jwt.decode(token, SECRET, algorithms=["HS256"], audience="ddp-api")
+        for changes in ({"iss": "wrong"}, {"aud": "wrong"}, {"exp": 0},
+                        {"token_type": "refresh"}, {"sub": {"$ne": None}}, {"jti": ""}):
+            with self.subTest(changes=changes):
+                invalid = jwt.encode({**claims, **changes}, SECRET, algorithm="HS256")
+                with self.app.test_request_context("/protected", headers={"Authorization": "Bearer " + invalid}):
+                    self.assertEqual(token_required()(lambda: "allowed")()[1], 401)
+        self.users.find_one.assert_not_called()
+
+    def test_legacy_tokens_without_required_claims_are_rejected(self):
+        token = User.encode_auth_token("user-123")
+        claims = jwt.decode(token, SECRET, algorithms=["HS256"], audience="ddp-api")
+        for name in ("iss", "aud", "exp", "iat", "sub", "jti", "token_type"):
+            with self.subTest(missing=name):
+                invalid = jwt.encode({key: value for key, value in claims.items() if key != name},
+                                     SECRET, algorithm="HS256")
+                self.assertEqual(User.decode_auth_token(invalid)["status"], "fail")
+
+    def test_disabled_and_unmapped_keycloak_users_are_rejected(self):
+        token = User.encode_auth_token("user-123")
+        for changes in ({"is_active": False}, {"auth_provider": "keycloak", "role": None}):
+            with self.subTest(changes=changes):
+                self.users.find_one.return_value = {**USER, **changes}
+                with self.app.test_request_context("/protected", headers={"Authorization": "Bearer " + token}):
+                    self.assertEqual(token_required()(lambda: "allowed")()[1], 401)
+                    self.assertNotIn("user", g)
+
+    def test_storage_failure_returns_503_without_exposing_details(self):
+        token = User.encode_auth_token("user-123")
+        self.blacklist.find_one.side_effect = RuntimeError("private database details")
+        with self.app.test_request_context("/protected", headers={"Authorization": "Bearer " + token}):
+            self.assertEqual(token_required()(lambda: "allowed")(),
+                             ({"message": "Authentication service is unavailable."}, 503))
 
     def test_existing_auth_route_and_options_exclusions(self):
         for path, method in [("/health", "GET"), ("/auth/login", "POST"), ("/protected", "OPTIONS")]:

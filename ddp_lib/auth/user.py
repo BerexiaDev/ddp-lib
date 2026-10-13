@@ -1,7 +1,7 @@
 import datetime
 import inject
 import jwt
-import os
+from ddp_lib.auth.tokens import decode_token, encode_token
 from ddp_lib.auth.black_list_token import BlacklistToken
 from ddp_lib.document import Document
 from flask_bcrypt import Bcrypt
@@ -44,20 +44,9 @@ class User(Document):
         Generates the Auth Token
         :return: string
         """
-        try:
-            key = os.getenv("SECRET_KEY")
-            payload = {
-                'exp': datetime.datetime.utcnow() + datetime.timedelta(days= days, seconds=seconds, minutes=minutes),
-                'iat': datetime.datetime.utcnow(),
-                'sub': user_id
-            }
-            return jwt.encode(
-                payload,
-                key,
-                algorithm='HS256'
-            )
-        except Exception as e:
-            return e
+        expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(
+            days=days, seconds=seconds, minutes=minutes)
+        return encode_token(user_id, "access", expires_at.timestamp())
         
     @staticmethod
     def encode_refresh_token(user_id, days=30):
@@ -65,20 +54,8 @@ class User(Document):
         Generates the Refresh Token
         :return: string
         """
-        try:
-            key = os.getenv("SECRET_KEY")
-            payload = {
-                'exp': datetime.datetime.utcnow() + datetime.timedelta(days=days),
-                'iat': datetime.datetime.utcnow(),
-                'sub': user_id
-            }
-            return jwt.encode(
-                payload,
-                key,
-                algorithm='HS256'
-            )
-        except Exception as e:
-            return str(e)
+        expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=days)
+        return encode_token(user_id, "refresh", expires_at.timestamp())
 
     @staticmethod
     def decode_auth_token(auth_token):
@@ -88,8 +65,7 @@ class User(Document):
         :return: integer|string
         """
         try:
-            key = os.getenv("SECRET_KEY")
-            payload = jwt.decode(auth_token, key, algorithms=['HS256'])
+            payload = decode_token(auth_token, "access")
             is_blacklisted_token = BlacklistToken.check_blacklist(auth_token)
             if is_blacklisted_token:
                 return {
@@ -107,5 +83,3 @@ class User(Document):
             return {"status": "fail", "message": "Invalid token. Please log in again."}
     def __repr__(self):
         return "<User '{} {}'>".format(self.first_name,self.last_name)
-
-

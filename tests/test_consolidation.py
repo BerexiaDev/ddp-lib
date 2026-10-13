@@ -1,5 +1,4 @@
 import unittest
-import os
 import jwt
 from unittest.mock import Mock, patch
 
@@ -21,7 +20,7 @@ class StrictAuthTests(contracts.AuthFixture):
             with self.subTest(header=header):
                 headers = {} if header is None else {"Authorization": header}
                 with self.app.test_request_context("/protected", headers=headers):
-                    result, status = AuthHelper.get_logged_in_user(request, strict=True)
+                    result, status = AuthHelper.get_logged_in_user(request)
                     self.assertEqual(status, 401)
                     self.assertEqual(result["status"], "fail")
                     self.assertNotIn("user", g)
@@ -29,16 +28,16 @@ class StrictAuthTests(contracts.AuthFixture):
 
     def test_strict_helper_handles_decoder_failure_without_user_lookup(self):
         with self.app.test_request_context("/protected", headers={"Authorization": "Bearer broken"}):
-            result, status = AuthHelper.get_logged_in_user(request, strict=True)
+            result, status = AuthHelper.get_logged_in_user(request)
             self.assertEqual(status, 401)
             self.assertEqual(result["status"], "fail")
             self.assertNotIn("user", g)
         self.users.find_one.assert_not_called()
 
     def test_strict_helper_rejects_token_without_subject(self):
-        token = jwt.encode({"other": "claim"}, os.environ["SECRET_KEY"], algorithm="HS256")
+        token = jwt.encode({"other": "claim"}, contracts.SECRET, algorithm="HS256")
         with self.app.test_request_context("/protected", headers={"Authorization": "Bearer " + token}):
-            result, status = AuthHelper.get_logged_in_user(request, strict=True)
+            result, status = AuthHelper.get_logged_in_user(request)
             self.assertEqual((result["status"], status), ("fail", 401))
             self.assertNotIn("user", g)
         self.users.find_one.assert_not_called()
@@ -46,9 +45,11 @@ class StrictAuthTests(contracts.AuthFixture):
     def test_strict_helper_rejects_structured_subjects_before_mongo_lookup(self):
         for subject in ({"$ne": None}, ["user-123"]):
             with self.subTest(subject=subject):
-                token = User.encode_auth_token(subject)
+                token = User.encode_auth_token("user-123")
+                claims = jwt.decode(token, contracts.SECRET, algorithms=["HS256"], audience="ddp-api")
+                token = jwt.encode({**claims, "sub": subject}, contracts.SECRET, algorithm="HS256")
                 with self.app.test_request_context("/protected", headers={"Authorization": "Bearer " + token}):
-                    result, status = AuthHelper.get_logged_in_user(request, strict=True)
+                    result, status = AuthHelper.get_logged_in_user(request)
                     self.assertEqual((result["status"], status), ("fail", 401))
                     self.assertNotIn("user", g)
         self.users.find_one.assert_not_called()
@@ -58,16 +59,16 @@ class StrictAuthTests(contracts.AuthFixture):
         self.users.find_one.return_value = None
         with self.app.test_request_context("/protected", headers={"Authorization": "Bearer " + token}):
             g.user = "previous authentication"
-            result, status = AuthHelper.get_logged_in_user(request, strict=True)
+            result, status = AuthHelper.get_logged_in_user(request)
             self.assertEqual((result["status"], status), ("fail", 401))
             self.assertNotIn("user", g)
 
     def test_strict_helper_keeps_success_fields_and_accepts_bearer_whitespace(self):
         token = User.encode_auth_token("user-123")
         with self.app.test_request_context("/protected", headers={"Authorization": "Bearer " + token}):
-            legacy = AuthHelper.get_logged_in_user(request)
+            expected = AuthHelper.get_logged_in_user(request)
         with self.app.test_request_context("/protected", headers={"Authorization": "bearer   " + token}):
-            self.assertEqual(AuthHelper.get_logged_in_user(request, strict=True), legacy)
+            self.assertEqual(AuthHelper.get_logged_in_user(request), expected)
             self.assertEqual(g.user.id, "user-123")
 
     def test_strict_helper_does_not_hide_database_outage(self):
@@ -75,7 +76,7 @@ class StrictAuthTests(contracts.AuthFixture):
         self.users.find_one.side_effect = RuntimeError("database unavailable")
         with self.app.test_request_context("/protected", headers={"Authorization": "Bearer " + token}):
             with self.assertRaisesRegex(RuntimeError, "database unavailable"):
-                AuthHelper.get_logged_in_user(request, strict=True)
+                AuthHelper.get_logged_in_user(request)
             self.assertNotIn("user", g)
 
     def test_strict_decorator_distinguishes_none_empty_and_allowed_roles(self):
@@ -84,15 +85,14 @@ class StrictAuthTests(contracts.AuthFixture):
         self.assertEqual(no_grants, [])
         with self.app.test_request_context("/protected", headers={"Authorization": "Bearer " + token}):
             for roles in ([], no_grants, ["ADMIN"]):
-                self.assertEqual(token_required(roles, strict=True)(lambda: "allowed")(),
+                self.assertEqual(token_required(roles)(lambda: "allowed")(),
                                  ({"message": "Permission denied"}, 403))
             for roles in (None, ["DATA_OWNER"]):
-                self.assertEqual(token_required(roles, strict=True)(lambda: "allowed")(), "allowed")
-            self.assertEqual(token_required([])(lambda: "legacy allowed")(), "legacy allowed")
+                self.assertEqual(token_required(roles)(lambda: "allowed")(), "allowed")
 
     def test_strict_decorator_returns_existing_invalid_token_envelope(self):
         with self.app.test_request_context("/protected", headers={"Authorization": "Bearer broken"}):
-            self.assertEqual(token_required(strict=True)(lambda: "allowed")(),
+            self.assertEqual(token_required()(lambda: "allowed")(),
                              ({"message": "Invalid token"}, 401))
 
 
