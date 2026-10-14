@@ -1,5 +1,6 @@
 from functools import wraps
 from flask import request
+from werkzeug.exceptions import HTTPException
 from ddp_lib.auth.auth_helper import AuthHelper
 
 ROUTES_TO_SKIP = [
@@ -53,6 +54,8 @@ def token_required(roles=None):
 
                 return f(*args, **kwargs)
 
+            except HTTPException:
+                raise
             except Exception:
                 return {"message": "Authentication service is unavailable."}, 503
         return decorated_function

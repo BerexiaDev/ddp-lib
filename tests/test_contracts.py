@@ -3,7 +3,8 @@ import unittest
 from unittest.mock import Mock, patch
 
 import jwt
-from flask import Flask, g, request
+from flask import Flask, abort, g, request
+from werkzeug.exceptions import Forbidden
 
 from ddp_lib.auth.auth_helper import AuthHelper
 from ddp_lib.auth.black_list_token import BlacklistToken
@@ -150,6 +151,12 @@ class AuthContracts(AuthFixture):
         with self.app.test_request_context("/protected", headers={"Authorization": "Bearer " + token}):
             self.assertEqual(token_required()(lambda: "allowed")(),
                              ({"message": "Authentication service is unavailable."}, 503))
+
+    def test_view_permission_denial_is_not_converted_to_service_failure(self):
+        token = User.encode_auth_token("user-123")
+        with self.app.test_request_context("/protected", headers={"Authorization": "Bearer " + token}):
+            with self.assertRaises(Forbidden):
+                token_required()(lambda: abort(403))()
 
     def test_existing_auth_route_and_options_exclusions(self):
         for path, method in [("/health", "GET"), ("/auth/login", "POST"), ("/protected", "OPTIONS")]:
