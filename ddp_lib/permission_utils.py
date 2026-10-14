@@ -162,6 +162,27 @@ PERMISSION_MATRIX: Dict[AppModuleEnum, Dict[UserActionEnum, List[UserRoleEnum]]]
         ],
 
     },
+    # Everyone builds their own dashboards (data stays scoped to their domains);
+    # only admins manage the organization dashboards and the default one.
+    AppModuleEnum.DASHBOARDS.value: {
+        UserActionEnum.WRITE.value: [
+            UserRoleEnum.ADMIN.value,
+            UserRoleEnum.DATA_OWNER.value,
+            UserRoleEnum.DATA_STEWARD.value,
+            UserRoleEnum.SPONSOR.value,
+            UserRoleEnum.PERMANENT_CONTROL.value,
+            UserRoleEnum.MANAGEMENT_CONTROL.value
+        ],
+        UserActionEnum.READ.value: [
+            UserRoleEnum.ADMIN.value,
+            UserRoleEnum.DATA_OWNER.value,
+            UserRoleEnum.DATA_STEWARD.value,
+            UserRoleEnum.SPONSOR.value,
+            UserRoleEnum.PERMANENT_CONTROL.value,
+            UserRoleEnum.MANAGEMENT_CONTROL.value
+        ],
+        UserActionEnum.MANAGE.value: [UserRoleEnum.ADMIN.value],
+    },
 }
 
 
