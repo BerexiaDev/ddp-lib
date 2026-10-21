@@ -13,7 +13,8 @@ from numbers import Integral, Real
 from uuid import uuid4
 
 
-COPY_BUFFER_SIZE = 64 * 1024
+COPY_BUFFER_SIZE = 64 * 1024  # max bytes per COPY read chunk
+# Postgres type OID → name (used when reading a live table)
 PG_TYPES = {
     16: "BOOLEAN", 17: "BYTEA", 20: "BIGINT", 21: "SMALLINT", 23: "INTEGER",
     25: "TEXT", 700: "REAL", 701: "DOUBLE PRECISION", 1043: "TEXT",
@@ -23,7 +24,7 @@ PG_TYPES = {
 
 
 class JsonNull:
-    """Distinguish a JSON null value from SQL NULL in a cleaning input."""
+    """JSON null (the value null). Not the same as SQL NULL (empty cell)."""
     def __repr__(self):
         return "JSON_NULL"
 
@@ -32,6 +33,7 @@ JSON_NULL = JsonNull()
 
 
 def quote_identifier(name):
+    # "my""table" — reject empty, NUL, or names longer than 63 bytes
     if not isinstance(name, str) or not name or "\x00" in name or len(name.encode("utf-8")) > 63:
         raise ValueError("PostgreSQL identifiers must be nonempty strings of at most 63 UTF-8 bytes")
     return '"' + name.replace('"', '""') + '"'
@@ -43,11 +45,12 @@ def qualified_table(schema, table):
 
 def is_missing(value):
     import pandas as pd
-    # Containers (including a one-element list) are never SQL NULL.
+    # Only scalars can be SQL NULL. A list/dict is data, even if empty.
     return pd.api.types.is_scalar(value) and bool(pd.isna(value))
 
 
 def _kind(value):
+    """One cell → one Postgres type. Used to check a whole column is consistent."""
     import numpy as np
     if isinstance(value, (bool, np.bool_)):
         return "BOOLEAN"
@@ -75,6 +78,7 @@ def _kind(value):
 
 
 def map_df_to_postgres_types(df, use_varchar=False, varchar_cap=255, sample_rows=1000):
+    """Walk every cell. Do not guess: '001' stays TEXT. Mixed types → error."""
     import pandas as pd
     if not isinstance(df, pd.DataFrame):
         raise ValueError("Your script must return a pandas DataFrame")
@@ -94,7 +98,7 @@ def map_df_to_postgres_types(df, use_varchar=False, varchar_cap=255, sample_rows
                 max_length = max(max_length, len(value))
         json_type = df.attrs.get("postgres_types", {}).get(name)
         if json_type in ("JSON", "JSONB"):
-            kind = json_type
+            kind = json_type  # caller already marked this column as JSON
         elif kinds and kinds <= {"BIGINT", "NUMERIC"}:
             kind = "NUMERIC" if "NUMERIC" in kinds else "BIGINT"
         elif len(kinds) == 1:
@@ -102,6 +106,7 @@ def map_df_to_postgres_types(df, use_varchar=False, varchar_cap=255, sample_rows
         elif kinds:
             raise ValueError(f"Column {name!r} mixes incompatible types: {sorted(kinds)}")
         else:
+            # all NULL: fall back to pandas dtype
             dtype = series.dtype
             if pd.api.types.is_bool_dtype(dtype):
                 kind = "BOOLEAN"
@@ -126,7 +131,7 @@ def map_df_to_postgres_types(df, use_varchar=False, varchar_cap=255, sample_rows
 
 
 def _json_text(value):
-    """Encode JSON numbers without routing Decimal through a binary float."""
+    """JSON text. Decimal stays exact (not float)."""
     if isinstance(value, JsonNull):
         return "null"
     if isinstance(value, Decimal):
@@ -144,6 +149,7 @@ def _json_text(value):
 
 
 def serialize_copy_value(value):
+    """One Python value → COPY text. None means SQL NULL (later written as \\N)."""
     import numpy as np
     if is_missing(value):
         return None
@@ -167,6 +173,7 @@ def serialize_copy_value(value):
 
 
 def _copy_fragments(df, col_types=None):
+    # Yield small pieces of COPY text: field, tab, newline. Escape \ t n r.
     col_types = col_types or df.attrs.get("postgres_types", {})
     for row_number, row in enumerate(df.itertuples(index=False, name=None), 1):
         for column, value in zip(df.columns, row):
@@ -189,7 +196,7 @@ def _copy_fragments(df, col_types=None):
 
 
 class CopyStream(io.TextIOBase):
-    """A bounded pull stream; never materializes the full output or a full row."""
+    """psycopg2 reads this like a file. Never builds the full CSV in memory."""
     def __init__(self, df, col_types=None):
         self.fragments = iter(_copy_fragments(df, col_types))
         self.pending = ""
@@ -212,6 +219,7 @@ class CopyStream(io.TextIOBase):
 
 
 def copy_dataframe(cursor, df, schema, table, col_types=None):
+    """COPY the DataFrame into an existing table. Caller must COMMIT/ROLLBACK."""
     columns = ", ".join(quote_identifier(col) for col in df.columns)
     statement = (f"COPY {qualified_table(schema, table)} ({columns}) FROM STDIN "
                  "WITH (FORMAT text, DELIMITER E'\\t', NULL E'\\\\N')")
@@ -220,12 +228,7 @@ def copy_dataframe(cursor, df, schema, table, col_types=None):
 
 
 def read_dataframe(connection, schema, table, limit=None):
-    """Build object columns directly: pandas inference can round nullable int64.
-
-    Cursor-local JSON parsers retain fractional numbers as Decimal. Object dtype
-    preserves native dates, bytes, booleans, NULL and numeric values unchanged.
-    Full cleaning still loads all input rows; fetches use bounded batches.
-    """
+    """Load a table into object columns (no pandas int/float guessing)."""
     import pandas as pd
     from psycopg2.extras import register_default_json, register_default_jsonb
     with connection.cursor() as cursor:
@@ -257,6 +260,7 @@ def read_dataframe(connection, schema, table, limit=None):
 
 
 def stage_dataframe(cursor, df):
+    """TEMP table + COPY. Live table is not touched. ON COMMIT DROP."""
     types = map_df_to_postgres_types(df)
     stage = "cleaning_" + uuid4().hex
     columns = ", ".join(f"{quote_identifier(name)} {kind}" for name, kind in types.items())
@@ -266,6 +270,7 @@ def stage_dataframe(cursor, df):
 
 
 def table_signature(cursor, schema, table):
+    """Column names + types, in order. Used to decide DELETE+INSERT vs DROP."""
     cursor.execute("""SELECT attname, atttypid, atttypmod FROM pg_attribute
         WHERE attrelid = to_regclass(%s) AND attnum > 0 AND NOT attisdropped
         ORDER BY attnum""", (qualified_table(schema, table),))
@@ -273,12 +278,10 @@ def table_signature(cursor, schema, table):
 
 
 def publish_staged_dataframe(cursor, schema, table, stage):
-    """Publish inside the caller's transaction, without CASCADE or commits.
+    """Swap TEMP into the live table. No COMMIT, no CASCADE.
 
-    Same-schema refreshes retain the table OID, views, indexes and grants.
-    Schema changes use DROP RESTRICT: incompatible dependencies fail safely and
-    require an explicit migration. The fully loaded temporary stage is discarded
-    by either COMMIT or ROLLBACK, so retries never inherit partial output.
+    Same columns → DELETE + INSERT (views/indexes stay).
+    Different columns → DROP RESTRICT, then CREATE LIKE TEMP.
     """
     final = qualified_table(schema, table)
     source = qualified_table("pg_temp", stage)
@@ -290,7 +293,7 @@ def publish_staged_dataframe(cursor, schema, table, stage):
         cursor.execute(f"LOCK TABLE {final} IN SHARE ROW EXCLUSIVE MODE")
     source_signature = table_signature(cursor, "pg_temp", stage)
     if exists and table_signature(cursor, schema, table) != source_signature:
-        cursor.execute(f"DROP TABLE {final} RESTRICT")
+        cursor.execute(f"DROP TABLE {final} RESTRICT")  # fails if a view depends on it
         exists = False
     if not exists:
         cursor.execute(f"CREATE TABLE {final} (LIKE {source} INCLUDING ALL)")
@@ -303,5 +306,4 @@ def publish_staged_dataframe(cursor, schema, table, stage):
         cursor.execute(f"DELETE FROM {final}")
     columns = ", ".join(quote_identifier(row[0]) for row in source_signature)
     cursor.execute(f"INSERT INTO {final} ({columns}) SELECT {columns} FROM {source}")
-    # Check deferred constraints before recording the successful metadata result.
-    cursor.execute("SET CONSTRAINTS ALL IMMEDIATE")
+    cursor.execute("SET CONSTRAINTS ALL IMMEDIATE")  # fail now, before the receipt
