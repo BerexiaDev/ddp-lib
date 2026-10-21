@@ -16,7 +16,7 @@ class ImportSmokeTests(unittest.TestCase):
                 importlib.import_module(module.name)
         if os.environ.get("DDP_INSTALL_SMOKE") == "1":
             installed = distribution("ddp-lib")
-            self.assertEqual(installed.version, "0.2.0")
+            self.assertEqual(installed.version, "0.2.1")
             self.assertEqual(Path(package.__file__).resolve(),
                              Path(installed.locate_file("ddp_lib/__init__.py")).resolve())
             self.assertNotIn(Path(__file__).resolve().parents[1], Path(package.__file__).parents)
