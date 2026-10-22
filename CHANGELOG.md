@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1 - Not released yet
+
+- Add shared lossless cleaning input/COPY serialization and transactional staging
+  and publication helpers for Core API/Sync.
+- Preserve exact numerics, nullable values, JSON scalars, bytes, dates and text.
+- Bound COPY buffering and add real PostgreSQL round-trip/failure regressions.
+- Keep cleaning dependencies optional through the `cleaning` extra.
+
 ## 0.2.0
 
 - Restore header, decoder-result and user checks through the additive
