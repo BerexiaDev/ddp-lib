@@ -143,6 +143,11 @@ PERMISSION_MATRIX: Dict[AppModuleEnum, Dict[UserActionEnum, List[UserRoleEnum]]]
         UserActionEnum.WRITE.value: [UserRoleEnum.ADMIN.value],
         UserActionEnum.READ.value: [UserRoleEnum.ADMIN.value],
     },
+    # Background job queue (Supervision menu).
+    AppModuleEnum.QUEUE.value: {
+        UserActionEnum.WRITE.value: [UserRoleEnum.ADMIN.value],
+        UserActionEnum.READ.value: [UserRoleEnum.ADMIN.value],
+    },
     AppModuleEnum.PROJECTS.value: {
         UserActionEnum.WRITE.value: [
             UserRoleEnum.ADMIN.value,
@@ -182,6 +187,11 @@ PERMISSION_MATRIX: Dict[AppModuleEnum, Dict[UserActionEnum, List[UserRoleEnum]]]
             UserRoleEnum.MANAGEMENT_CONTROL.value
         ],
         UserActionEnum.MANAGE.value: [UserRoleEnum.ADMIN.value],
+    },
+    # Email templates, notification settings, SMTP settings and sending.
+    AppModuleEnum.EMAILS.value: {
+        UserActionEnum.WRITE.value: [UserRoleEnum.ADMIN.value],
+        UserActionEnum.READ.value: [UserRoleEnum.ADMIN.value],
     },
 }
 
