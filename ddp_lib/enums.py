@@ -25,6 +25,7 @@ class AppModuleEnum(Enum):
     DATA_ENGINEERING = 'DATA_ENGINEERING'
     PROJECTS = 'PROJECTS'
     DASHBOARDS = 'DASHBOARDS'
+    EMAILS = 'EMAILS'
 
 class UserActionEnum(Enum):
     READ = 'READ'
