@@ -143,6 +143,11 @@ PERMISSION_MATRIX: Dict[AppModuleEnum, Dict[UserActionEnum, List[UserRoleEnum]]]
         UserActionEnum.WRITE.value: [UserRoleEnum.ADMIN.value],
         UserActionEnum.READ.value: [UserRoleEnum.ADMIN.value],
     },
+    # Background job queue (Supervision menu).
+    AppModuleEnum.QUEUE.value: {
+        UserActionEnum.WRITE.value: [UserRoleEnum.ADMIN.value],
+        UserActionEnum.READ.value: [UserRoleEnum.ADMIN.value],
+    },
     AppModuleEnum.PROJECTS.value: {
         UserActionEnum.WRITE.value: [
             UserRoleEnum.ADMIN.value,
@@ -161,6 +166,32 @@ PERMISSION_MATRIX: Dict[AppModuleEnum, Dict[UserActionEnum, List[UserRoleEnum]]]
             UserRoleEnum.MANAGEMENT_CONTROL.value
         ],
 
+    },
+    # Everyone builds their own dashboards (data stays scoped to their domains);
+    # only admins manage the organization dashboards and the default one.
+    AppModuleEnum.DASHBOARDS.value: {
+        UserActionEnum.WRITE.value: [
+            UserRoleEnum.ADMIN.value,
+            UserRoleEnum.DATA_OWNER.value,
+            UserRoleEnum.DATA_STEWARD.value,
+            UserRoleEnum.SPONSOR.value,
+            UserRoleEnum.PERMANENT_CONTROL.value,
+            UserRoleEnum.MANAGEMENT_CONTROL.value
+        ],
+        UserActionEnum.READ.value: [
+            UserRoleEnum.ADMIN.value,
+            UserRoleEnum.DATA_OWNER.value,
+            UserRoleEnum.DATA_STEWARD.value,
+            UserRoleEnum.SPONSOR.value,
+            UserRoleEnum.PERMANENT_CONTROL.value,
+            UserRoleEnum.MANAGEMENT_CONTROL.value
+        ],
+        UserActionEnum.MANAGE.value: [UserRoleEnum.ADMIN.value],
+    },
+    # Email templates, notification settings, SMTP settings and sending.
+    AppModuleEnum.EMAILS.value: {
+        UserActionEnum.WRITE.value: [UserRoleEnum.ADMIN.value],
+        UserActionEnum.READ.value: [UserRoleEnum.ADMIN.value],
     },
 }
 

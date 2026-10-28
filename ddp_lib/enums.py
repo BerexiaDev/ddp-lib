@@ -24,11 +24,15 @@ class AppModuleEnum(Enum):
     QUEUE = 'QUEUE'
     DATA_ENGINEERING = 'DATA_ENGINEERING'
     PROJECTS = 'PROJECTS'
+    DASHBOARDS = 'DASHBOARDS'
+    EMAILS = 'EMAILS'
 
 class UserActionEnum(Enum):
     READ = 'READ'
     WRITE = 'WRITE'
     EDIT_RULE_QUERY = 'EDIT_RULE_QUERY'
+    # Manage what is shared with the whole organization (e.g. system dashboards)
+    MANAGE = 'MANAGE'
 
 
 
