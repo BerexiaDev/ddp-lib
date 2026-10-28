@@ -44,3 +44,26 @@ targets existing Python 3.10 consumers.
 
 See [the consolidation audit](docs/KAN-5.md), [changes](CHANGELOG.md) and
 [release procedure](RELEASING.md).
+
+## Cleaning I/O
+
+`ddp_lib.cleaning` provides lossless PostgreSQL input/COPY and transactional
+staging/publication helpers shared by Core API and Sync. Install the optional
+runtime dependencies with `pip install '.[cleaning]'`. The module itself imports
+without pandas or psycopg2, so other library consumers remain lightweight.
+
+Run `python -m unittest discover -s tests -p test_cleaning.py -v`; set
+`CLEANING_TEST_POSTGRES_DSN` to include real database round trips and publication
+failure tests. Each database test owns a unique schema.
+
+## Population indexes
+
+`ddp_lib.population_indexes` provides the index identity, restoration and ANALYZE
+helpers used by Core API and Sync. Callers supply their population document and
+connector factory; the module does not import either service's application code.
+PostgreSQL operations require psycopg2 in the consuming service. Importing the
+module and parsing index identities do not require the database driver.
+
+Run `python -m unittest discover -s tests -p test_population_indexes.py -v` for
+the identity contracts. Core's `ddp-sync/tests/test_population_indexes.py` covers
+the database lifecycle through both API and Sync.

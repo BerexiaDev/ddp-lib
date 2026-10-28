@@ -9,6 +9,13 @@
   using Flask configuration. Shared encoders issue the same claims.
 - Always enforce active users and Keycloak role assignments, deny empty role
   lists and return 503 for authentication service failures.
+- Share population index identity, restoration and ANALYZE helpers between Core
+  API and Sync in `ddp_lib.population_indexes`, with lazy PostgreSQL imports.
+- Add shared lossless cleaning input/COPY serialization and transactional staging
+  and publication helpers for Core API/Sync.
+- Preserve exact numerics, nullable values, JSON scalars, bytes, dates and text.
+- Bound COPY buffering and add real PostgreSQL round-trip/failure regressions.
+- Keep cleaning dependencies optional through the `cleaning` extra.
 
 ## 0.2.0
 
