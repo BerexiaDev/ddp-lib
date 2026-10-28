@@ -1,7 +1,14 @@
 # Changelog
 
-## 0.2.1 - Not released yet
+## Unreleased
 
+- Require the Core DDP token contract for all authentication helpers. Remove the
+  legacy validation mode and the `strict` keyword argument; this version targets
+  new Core applications.
+- Validate signature, expiry, issuer, audience, token type and required claims
+  using Flask configuration. Shared encoders issue the same claims.
+- Always enforce active users and Keycloak role assignments, deny empty role
+  lists and return 503 for authentication service failures.
 - Share population index identity, restoration and ANALYZE helpers between Core
   API and Sync in `ddp_lib.population_indexes`, with lazy PostgreSQL imports.
 - Add shared lossless cleaning input/COPY serialization and transactional staging

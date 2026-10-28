@@ -8,19 +8,23 @@ Python 3.10+ is required. Install the reviewed release using your configured
 package channel. Runtime dependencies are declared in `pyproject.toml`;
 Flask 2 and PyMongo 3 remain supported for existing consumers.
 
-## Compatibility options
+## Authentication
 
-Existing calls retain their default behavior. Request validation can be enabled
-explicitly with `AuthHelper.get_logged_in_user(request, strict=True)` or
-`@token_required(roles=..., strict=True)`.
+`AuthHelper.get_logged_in_user(request)` and `@token_required(roles=...)` always
+validate the Core DDP token contract. Configure `SECRET_KEY` (at least 32 bytes),
+`DDP_TOKEN_ISSUER` and `DDP_TOKEN_AUDIENCE` in Flask's application configuration.
+Token helpers require an application context and read this configuration.
 
-In strict mode, missing/malformed bearer headers, failed decoding, tokens without
-a scalar subject and missing users return a failed authentication result. Structured
-subjects are rejected before they can become MongoDB query operators. `roles=None`
-allows any authenticated user; `roles=[]` denies access. Existing route exclusions
-remain in effect. Without strict mode, the legacy empty-role and error behavior
-is retained. Token strings, numeric subjects, lifetimes, decoder dictionaries and
-encoder error returns are unchanged.
+Signature, expiry, issuer, audience, token type and required claims are validated.
+Missing/malformed bearer headers, invalid tokens, missing or disabled users and
+Keycloak users without a mapped role fail authentication. `roles=None` allows any
+authenticated user; `roles=[]` denies access. Existing route exclusions remain in
+effect. Invalid credentials return 401, denied roles return 403 and authentication
+service failures return 503.
+
+There is no legacy validation mode. Shared token encoders issue the same required
+claims, normalize subjects to strings and raise configuration errors. Core Auth
+controls its issuance lifetimes through its service configuration.
 
 Audit logging accepts actor identifiers in either `id` or `_id`, preferring
 an explicitly supplied `id`; output remains `user.id`.
