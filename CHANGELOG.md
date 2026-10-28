@@ -2,6 +2,8 @@
 
 ## 0.2.1 - Not released yet
 
+- Share population index identity, restoration and ANALYZE helpers between Core
+  API and Sync in `ddp_lib.population_indexes`, with lazy PostgreSQL imports.
 - Add shared lossless cleaning input/COPY serialization and transactional staging
   and publication helpers for Core API/Sync.
 - Preserve exact numerics, nullable values, JSON scalars, bytes, dates and text.
