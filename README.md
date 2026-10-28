@@ -51,3 +51,15 @@ without pandas or psycopg2, so other library consumers remain lightweight.
 Run `python -m unittest discover -s tests -p test_cleaning.py -v`; set
 `CLEANING_TEST_POSTGRES_DSN` to include real database round trips and publication
 failure tests. Each database test owns a unique schema.
+
+## Population indexes
+
+`ddp_lib.population_indexes` provides the index identity, restoration and ANALYZE
+helpers used by Core API and Sync. Callers supply their population document and
+connector factory; the module does not import either service's application code.
+PostgreSQL operations require psycopg2 in the consuming service. Importing the
+module and parsing index identities do not require the database driver.
+
+Run `python -m unittest discover -s tests -p test_population_indexes.py -v` for
+the identity contracts. Core's `ddp-sync/tests/test_population_indexes.py` covers
+the database lifecycle through both API and Sync.
