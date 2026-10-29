@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.1 - 2026-10-29
 
 - Require the Core DDP token contract for all authentication helpers. Remove the
   legacy validation mode and the `strict` keyword argument; this version targets
