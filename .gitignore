@@ -4,4 +4,6 @@ venv
 build
 dist
 esg_lib.egg-info
-
+ddp_lib.egg-info/
+.venv/
+docs/superpowers/plans

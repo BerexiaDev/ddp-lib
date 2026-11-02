@@ -1,5 +1,6 @@
 from functools import wraps
 from flask import request
+from werkzeug.exceptions import HTTPException
 from ddp_lib.auth.auth_helper import AuthHelper
 
 ROUTES_TO_SKIP = [
@@ -21,6 +22,7 @@ ROUTES_TO_SKIP = [
 
 
 def token_required(roles=None):
+    """Authenticate requests; roles=None allows any user, roles=[] denies all."""
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
@@ -35,7 +37,6 @@ def token_required(roles=None):
                 # Fetch logged-in user data
                 data, status = AuthHelper.get_logged_in_user(request)
 
-                # Log the URL and token
                 if status != 200:
                     return {"message": "Invalid token"}, 401
 
@@ -44,7 +45,7 @@ def token_required(roles=None):
                     return {"message": "Token is missing"}, 401
 
                 # Check if the token has the required role
-                if not roles:
+                if roles is None:
                     return f(*args, **kwargs)
 
                 user_role = token.get('role')
@@ -53,7 +54,9 @@ def token_required(roles=None):
 
                 return f(*args, **kwargs)
 
-            except Exception as e:
-                return {"message": f"Authentication error: {str(e)}"}, 401
+            except HTTPException:
+                raise
+            except Exception:
+                return {"message": "Authentication service is unavailable."}, 503
         return decorated_function
     return decorator
