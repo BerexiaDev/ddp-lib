@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.3 - 2026-11-02
+
+- Release the consolidated library from `main` with updated package metadata.
+- Carry forward the functionality from 0.2.1 without runtime changes.
+
 ## 0.2.1 - 2026-10-29
 
 - Require the Core DDP token contract for all authentication helpers. Remove the
