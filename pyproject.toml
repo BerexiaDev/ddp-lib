@@ -17,6 +17,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
+    "pglast>=7.23,<8",
     "cryptography==44.0.2",
     "flask-restx==1.2.0",
     "inject==5.0.0",

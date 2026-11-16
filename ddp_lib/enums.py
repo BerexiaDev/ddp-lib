@@ -162,6 +162,7 @@ class SyncStatus(Enum):
 
 
 class QueuedJobAction(Enum):
+    RECONCILE_INDEXES = "RECONCILE_INDEXES"
     FULL_REBUILD   = "FULL_REBUILD"
     FULL_REFRESH   = "FULL_REFRESH"
     FULL_SYNC      = "FULL_SYNC"
