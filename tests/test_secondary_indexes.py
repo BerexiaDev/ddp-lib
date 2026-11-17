@@ -149,10 +149,66 @@ class LifecycleTests(unittest.TestCase):
         delete_intent(self.collection, 'target', self.schema, 'idx')
         with self.assertRaises(self.life.IndexRepairError): self.run_indexes()
         self.assertEqual(self.physical().oid, oid)
+
+    def test_saved_constraints_do_not_block_other_indexes_or_get_dropped(self):
         self.cursor.execute(f'ALTER TABLE "{self.schema}".data ADD CONSTRAINT primary_idx PRIMARY KEY (id)')
-        self.save(self.sql('primary_idx', unique=True), adopt=True)
-        with self.assertRaises(self.life.IndexRepairError): self.run_indexes()
-        self.assertTrue(self.physical('primary_idx').constraint_owned)
+        self.cursor.execute(f'ALTER TABLE "{self.schema}".data ADD CONSTRAINT unique_idx UNIQUE (value)')
+        oids = {name: self.physical(name).oid for name in ('primary_idx', 'unique_idx')}
+        for name in oids:
+            self.save(self.sql(name, unique=True), adopt=True)
+        self.save()
+        self.assertTrue(self.run_indexes().ready)
+        self.assertTrue(self.physical().valid)
+        entries = {e['index_name']: e for e in self.collection.find_one()['secondary_indexes']}
+        for name, oid in oids.items():
+            self.assertEqual(entries[name]['status'], 'error')
+            self.assertIn(name, entries[name]['last_error'])
+            self.assertEqual(self.physical(name).oid, oid)
+            delete_intent(self.collection, 'target', self.schema, name)
+        self.assertTrue(self.run_indexes().ready)
+        for name, oid in oids.items():
+            self.assertEqual(self.physical(name).oid, oid)
+            self.assertTrue(self.physical(name).constraint_owned)
+
+    def test_create_rejects_constraint_names_before_saving(self):
+        from ddp_lib.dataset_indexes import DatasetIndexes
+        from types import SimpleNamespace
+        self.cursor.execute(f'ALTER TABLE "{self.schema}".data ADD CONSTRAINT primary_idx PRIMARY KEY (id)')
+        self.cursor.execute(f'ALTER TABLE "{self.schema}".data ADD CONSTRAINT unique_idx UNIQUE (value)')
+        manager = DatasetIndexes(self.db, lambda schema: SimpleNamespace(get_connection=self.connect),
+                                 lambda doc: doc['data_mart_schema'])
+        target = manager.get('POPULATION', 'target')
+        before = self.collection.find_one()
+        for name in ('primary_idx', 'unique_idx'):
+            oid = self.physical(name).oid
+            with self.assertRaisesRegex(IndexConflict, name):
+                manager.create(target, self.sql(name, unique=True), {})
+            self.assertEqual(self.collection.find_one(), before)
+            self.assertEqual(self.physical(name).oid, oid)
+
+    def test_other_table_constraint_remains_a_conflict(self):
+        self.cursor.execute(f'CREATE TABLE "{self.schema}".other (id int CONSTRAINT other_pkey PRIMARY KEY)')
+        oid = self.physical('other_pkey').oid
+        self.save(self.sql('other_pkey'))
+        for state in ('present', 'absent'):
+            if state == 'absent':
+                delete_intent(self.collection, 'target', self.schema, 'other_pkey')
+            with self.assertRaisesRegex(self.life.IndexRepairError,
+                                        'other_pkey: Index name is occupied by another relation'):
+                self.run_indexes()
+            self.assertEqual(self.physical('other_pkey').oid, oid)
+
+    def test_source_constraint_still_fails_reconciliation(self):
+        self.cursor.execute(f'ALTER TABLE "{self.schema}".data ADD CONSTRAINT primary_idx PRIMARY KEY (id)')
+        oid = self.physical('primary_idx').oid
+        source = {'id': 'source:test', 'index_name': 'primary_idx',
+                  'sql': self.sql('primary_idx', unique=True), 'desired_state': 'present',
+                  'revision': 1, 'adopt': False}
+        with self.assertRaisesRegex(self.life.IndexRepairError, 'primary_idx'):
+            self.life.reconcile(self.collection, 'target', self.schema, 'data', self.connect,
+                                source_entries=[source])
+        self.assertEqual(self.physical('primary_idx').oid, oid)
+        self.assertTrue(self.collection.find_one()['index_repair_pending'])
 
     def test_I01_G_explicit_adoption_verifies_and_preserves_comment(self):
         self.cursor.execute(self.sql())

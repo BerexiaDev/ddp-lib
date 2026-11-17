@@ -8,7 +8,7 @@ import re
 from ddp_lib import secondary_indexes as lifecycle
 from ddp_lib.index_metadata import save_intent, delete_intent, IndexConflict
 from ddp_lib.index_sql import parse_index, quote
-from ddp_connectors.postgres_indexes import dataset_session
+from ddp_connectors.postgres_indexes import dataset_session, inspect_index
 
 KINDS = {'REFERENCE': 'references', 'POPULATION': 'populations', 'CLEANED_TABLE': 'cleaned_tables'}
 DEPENDENCIES = {'tables_ids': 'REFERENCE', 'population_ids': 'POPULATION', 'cleaned_table_ids': 'CLEANED_TABLE'}
@@ -167,8 +167,14 @@ class DatasetIndexes:
             raise ValueError('SQL target does not match selected dataset')
         with self.guard(target) as connection:
             names = {e['index_name'] for e in self.source_policy(target, connection)}
+            with connection.cursor() as cursor:
+                physical = inspect_index(cursor, target.schema, definition.index_name)
         if definition.index_name in names:
             raise IndexConflict('Source-managed indexes are read-only')
+        if physical and (physical.primary or physical.constraint_owned):
+            raise IndexConflict(
+                f"Constraint-owned index '{definition.index_name}' is read-only"
+            )
         entry = save_intent(target.collection, target.id, target.schema, target.table, sql, origin, adopt)
         result = self.reconcile(target)
         return {'index': entry, **result.to_dict()}

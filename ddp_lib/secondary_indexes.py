@@ -104,7 +104,9 @@ def validate_existing(cursor, entry, physical, schema, table):
     if (physical.schema, physical.table) != (schema, table):
         raise IndexConflict("Index name is occupied by another relation")
     if physical.primary or physical.constraint_owned:
-        raise IndexConflict("Constraint-owned indexes are read-only")
+        raise IndexConflict(
+            f"Constraint-owned index '{physical.index_name}' is read-only"
+        )
     definition = parse_index(entry["sql"])
     if owns(entry, physical):
         return
@@ -120,6 +122,22 @@ def validate_existing(cursor, entry, physical, schema, table):
 def apply_entry(cursor, entry, schema, table, *, concurrently=True):
     definition = parse_index(entry["sql"])
     physical = inspect_index(cursor, schema, entry["index_name"])
+    if (physical and (physical.schema, physical.table) == (schema, table)
+            and (physical.primary or physical.constraint_owned)):
+        # Leave the primary key or unique constraint in place. A mistaken saved
+        # request must not block the other indexes on this table.
+        if entry["desired_state"] == "absent":
+            return {"status": "deleted", "schema": schema, "table": table}
+        if str(entry.get("id", "")).startswith("source:"):
+            raise IndexConflict(
+                f"Constraint-owned index '{physical.index_name}' is read-only"
+            )
+        return {
+            "status": "error",
+            "last_error": f"Constraint-owned index '{physical.index_name}' is read-only",
+            "schema": schema,
+            "table": table,
+        }
     validate_existing(cursor, entry, physical, schema, table)
     if entry["desired_state"] == "absent":
         if physical:
@@ -245,6 +263,12 @@ def reconcile(
                                        concurrently, source_entries, finish)
 
 
+def _error_text(errors):
+    return "; ".join(
+        f"{item['index_name']}: {item['error']}" if item.get("index_name") else item["error"]
+        for item in errors
+    )
+
 def _reconcile_snapshot(collection, dataset_id, schema, table, connection,
                         concurrently, source_entries, finish):
     doc = collection.find_one({"_id": dataset_id})
@@ -327,7 +351,7 @@ def _reconcile_snapshot(collection, dataset_id, schema, table, connection,
             {
                 "$set": {
                     "index_repair_pending": True,
-                    "index_repair_error": "; ".join(e["error"] for e in errors),
+                    "index_repair_error": _error_text(errors),
                     "indexes_applied": False,
                 }
             },
@@ -335,7 +359,7 @@ def _reconcile_snapshot(collection, dataset_id, schema, table, connection,
         result = ReconcileResult(
             False, applied, tuple(errors), latest.get("secondary_indexes_revision", 0)
         )
-        raise IndexRepairError("; ".join(e["error"] for e in errors), result)
+        raise IndexRepairError(_error_text(errors), result)
     # Never let index verification stand in for a data commit checkpoint.
     if finish and latest.get("index_data_ready") is not False:
         query = {
