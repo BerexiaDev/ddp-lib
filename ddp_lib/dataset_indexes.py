@@ -8,7 +8,7 @@ import re
 from ddp_lib import secondary_indexes as lifecycle
 from ddp_lib.index_metadata import save_intent, delete_intent, IndexConflict
 from ddp_lib.index_sql import parse_index, quote
-from ddp_connectors.postgres_indexes import dataset_session, inspect_index
+from ddp_lib.postgres_indexes import dataset_session, inspect_index
 
 KINDS = {'REFERENCE': 'references', 'POPULATION': 'populations', 'CLEANED_TABLE': 'cleaned_tables'}
 DEPENDENCIES = {'tables_ids': 'REFERENCE', 'population_ids': 'POPULATION', 'cleaned_table_ids': 'CLEANED_TABLE'}
@@ -132,7 +132,7 @@ class DatasetIndexes:
             yield connection
 
     def source_policy(self, target, connection):
-        from ddp_connectors.postgres_indexes import list_indexes
+        from ddp_lib.postgres_indexes import list_indexes
         with connection.cursor() as cursor:
             physical = list_indexes(cursor, target.schema, target.table)
         return source_entries(target, physical)

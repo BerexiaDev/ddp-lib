@@ -13,7 +13,7 @@ from ddp_lib.index_metadata import (
     record_result,
     expected_revision,
 )
-from ddp_connectors.postgres_indexes import (
+from ddp_lib.postgres_indexes import (
     advisory_lock,
     dataset_session,
     inspect_index,

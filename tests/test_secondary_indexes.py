@@ -75,7 +75,7 @@ class LifecycleTests(unittest.TestCase):
         return self.life.reconcile(self.collection, 'target', self.schema, 'data', self.connect)
 
     def physical(self, name='idx'):
-        from ddp_connectors.postgres_indexes import inspect_index
+        from ddp_lib.postgres_indexes import inspect_index
         return inspect_index(self.cursor, self.schema, name)
 
     def test_I01_A_B_restore_definition_and_keep_tombstone_across_two_rebuilds(self):
@@ -242,7 +242,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertTrue(self.physical().valid)
 
     def test_I01_I_dataset_and_name_contention_close_connections(self):
-        from ddp_connectors.postgres_indexes import advisory_lock
+        from ddp_lib.postgres_indexes import advisory_lock
         self.save()
         for key in [f'ddp-index:v1:dataset:{self.collection.full_name}:target', f'ddp-index:v1:name:{self.schema}:idx']:
             opened = []
@@ -255,7 +255,7 @@ class LifecycleTests(unittest.TestCase):
         self.run_indexes()
 
     def test_supplied_ddl_connection_obeys_dataset_lock_and_is_not_closed(self):
-        from ddp_connectors.postgres_indexes import advisory_lock, IndexLockBusy
+        from ddp_lib.postgres_indexes import advisory_lock, IndexLockBusy
         self.save()
         borrowed = self.connect()
         try:
