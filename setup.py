@@ -5,11 +5,13 @@ setup(
     version='0.1',
     packages=find_packages(),
     install_requires=[
-        "cryptography==44.0.2",
+        # Security floors (CVE fixes); exact versions are locked by each
+        # service's constraints.txt, not here.
+        "cryptography>=50.0.0",
         "flask-restx==1.2.0",
         "inject==5.0.0",
-        "python-dotenv==0.21.1",
-        "PyJWT==2.14.0",
+        "python-dotenv>=1.2.2,<2",
+        "PyJWT>=2.15.0,<3",
         "loguru==0.6.0",
         "Flask-Bcrypt==1.0.1",
     ],
