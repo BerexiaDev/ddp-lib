@@ -8,7 +8,7 @@ setup(
         # Security floors (CVE fixes); exact versions are locked by each
         # service's constraints.txt, not here.
         "cryptography>=50.0.0",
-        "flask-restx==1.2.0",
+        "flask-restx>=1.3.2,<2",  # first release supporting Flask 3 / Werkzeug 3
         "inject==5.0.0",
         "python-dotenv>=1.2.2,<2",
         "PyJWT>=2.15.0,<3",

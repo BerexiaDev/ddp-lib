@@ -33,7 +33,8 @@ class Document:
     def save(self):
         if not self._id:
             self._id = generate_id()
-        self._id = self.db().save(self.to_dict())
+        # Insert or fully replace by _id: what pymongo 3's Collection.save() did.
+        self.db().replace_one({"_id": self._id}, self.to_dict(), upsert=True)
         return self
 
     def save_all(self, items, **kwargs):
@@ -52,7 +53,8 @@ class Document:
         if self._id:
             if not query:
                 query = {"_id": self._id}
-            self.db().remove(query)
+            # pymongo 3's Collection.remove() deleted every matching document.
+            self.db().delete_many(query)
         return self
 
     def to_dict(self):
