@@ -18,6 +18,7 @@ from ddp_lib.postgres_indexes import (
     dataset_session,
     inspect_index,
     list_indexes,
+    index_ready,
     stamp,
     drop,
 )
@@ -41,9 +42,10 @@ class IndexRepairError(RuntimeError):
 
 
 def catalog_signature(physical, definition):
+    # Compare index definitions independently of their names.
     signature = parse_index(physical.definition).signature
-    # PostgreSQL prints ONLY for every partitioned parent. indisvalid proves
-    # all required child indexes are attached for a non-ONLY request.
+    # PostgreSQL prints ONLY for every partitioned parent. Full-tree readiness
+    # is checked separately; catalog rendering must not change saved intent.
     if physical.relation_kind == "p":
         signature["only"] = definition.only
     return signature
@@ -192,8 +194,9 @@ def apply_entry(cursor, entry, schema, table, *, concurrently=True):
         stamp(cursor, physical, receipt(entry, physical))
     elif entry.get("adopt"):
         stamp(cursor, physical, receipt(entry, physical))
-    if not physical.valid or not physical.ready:
-        raise IndexRepairError("Index is not valid and ready")
+    # Report success only when the index and all its partitions are ready.
+    if not index_ready(cursor, physical):
+        raise IndexRepairError("Index or partition tree is not valid and ready; attachment review required")
     signature = catalog_signature(physical, definition)
     if expected is not None and signature != expected:
         raise IndexConflict(
@@ -394,6 +397,8 @@ def listing(collection, dataset_id, schema, table, connection, source_entries=()
     sources = {e["index_name"]: e for e in source_entries}
     with connection.cursor() as cursor:
         physical = {p.index_name: p for p in list_indexes(cursor, schema, table)}
+        # Show the same readiness in the UI that reconciliation checks.
+        readiness = {name: index_ready(cursor, p) for name, p in physical.items()}
     result = []
     for name in sorted(set(entries) | set(sources) | set(physical)):
         entry, actual = entries.get(name), physical.get(name)
@@ -410,11 +415,11 @@ def listing(collection, dataset_id, schema, table, connection, source_entries=()
             classification=kind,
             index_repair_pending=bool(doc.get("index_repair_pending")),
             index_repair_error=doc.get("index_repair_error"),
-            physical_ready=bool(actual and actual.valid and actual.ready),
+            physical_ready=readiness.get(name, False),
             physical_state=(
                 "missing"
                 if actual is None
-                else "ready" if actual.valid and actual.ready else "invalid"
+                else "ready" if readiness[name] else "invalid"
             ),
             can_delete=kind == "secondary" and (actual is None or owns(entry, actual)),
         )
