@@ -6,9 +6,10 @@ import json
 import re
 
 from ddp_lib import secondary_indexes as lifecycle
+from ddp_lib.enums import IndexCreationMode
 from ddp_lib.index_metadata import save_intent, delete_intent, IndexConflict
 from ddp_lib.index_sql import parse_index, quote
-from ddp_lib.postgres_indexes import dataset_session, inspect_index
+from ddp_lib.postgres_indexes import advisory_lock, dataset_session, inspect_index
 
 KINDS = {'REFERENCE': 'references', 'POPULATION': 'populations', 'CLEANED_TABLE': 'cleaned_tables'}
 DEPENDENCIES = {'tables_ids': 'REFERENCE', 'population_ids': 'POPULATION', 'cleaned_table_ids': 'CLEANED_TABLE'}
@@ -126,7 +127,14 @@ class DatasetIndexes:
         return self.connector_factory(target.schema).get_connection
 
     @contextmanager
-    def guard(self, target):
+    def guard(self, target, connection=None):
+        if connection is not None:
+            if not connection.autocommit:
+                raise ValueError('Index DDL requires a dedicated autocommit connection')
+            with advisory_lock(connection, f'ddp-index:v1:dataset:{target.collection.full_name}:{target.id}'):
+                with advisory_lock(connection, f'ddp-index:v1:relation:{target.schema}:{target.table}'):
+                    yield connection
+            return
         with dataset_session(self.factory(target), target.collection.full_name, target.id,
                              target.schema, target.table) as connection:
             yield connection
@@ -137,27 +145,64 @@ class DatasetIndexes:
             physical = list_indexes(cursor, target.schema, target.table)
         return source_entries(target, physical)
 
-    def reconcile(self, target, connection=None, *, finish=True):
+    def reconcile(self, target, connection=None, *, finish=True, mode=IndexCreationMode.ONLINE.value):
+        """Verify indexes online, or restore them in a post-load maintenance window.
+
+        Post-load CREATE may block target writes. It requires an existing data
+        commit checkpoint; selecting this mode never creates that checkpoint.
+        """
+        if mode not in {item.value for item in IndexCreationMode}:
+            raise ValueError('Index creation mode must be an IndexCreationMode value')
         # Keep the already resolved KAN-11 identity across lease expiry after a
         # reserved SQL commit; ordinary identity backfill may still be buffered.
         from dataclasses import replace
         document = target.collection.find_one({"_id": target.id})
         schema_field = "data_mart_schema" if target.kind == "REFERENCE" else "schema"
-        if (not document or document.get("table_name") != target.table
-                or document.get(schema_field, target.schema) != target.schema):
-            raise IndexConflict("Dataset identity changed; retry")
-        target = replace(target, document=document)
         try:
-            if connection is None:
-                with self.guard(target) as connection:
-                    return self.reconcile(target, connection, finish=finish)
-            return lifecycle.reconcile(target.collection, target.id, target.schema, target.table,
-                self.factory(target), connection, source_entries=self.source_policy(target, connection), finish=finish)
+            with self.guard(target, connection) as connection:
+                # Borrowed connections must also lock before reading the mode's
+                # checkpoint: a data attempt may have started since get().
+                document = target.collection.find_one({"_id": target.id})
+                if (
+                    not document
+                    or document.get("table_name") != target.table
+                    or document.get(schema_field, target.schema) != target.schema
+                ):
+                    raise IndexConflict("Dataset identity changed; retry")
+                target = replace(target, document=document)
+                if mode == IndexCreationMode.POST_LOAD.value and not (
+                    document.get("index_data_ready") is True
+                    and document.get("index_data_token")
+                ):
+                    raise lifecycle.IndexRepairError(
+                        "Post-load indexes require a committed data checkpoint"
+                    )
+                return lifecycle.reconcile(target.collection, target.id, target.schema, target.table,
+                    self.factory(target), connection, concurrently=mode == IndexCreationMode.ONLINE.value,
+                    source_entries=self.source_policy(target, connection), finish=finish)
         except Exception as exc:
             target.collection.update_one({"_id": target.id,
-                "index_data_token": document.get("index_data_token")}, {"$set": {
+                "index_data_token": (document or {}).get("index_data_token")}, {"$set": {
                     "index_repair_pending": True, "index_repair_error": str(exc), "indexes_applied": False}})
             raise
+
+    def repair(self, target):
+        """Retry committed data in post-load mode; manual repair stays online."""
+        with self.guard(target) as connection:
+            document = target.collection.find_one({"_id": target.id}) or {}
+            if document.get("index_data_ready") is False:
+                raise lifecycle.IndexRepairError(
+                    "The current data attempt has not committed; resume its data job"
+                )
+            mode = (
+                IndexCreationMode.POST_LOAD.value
+                if (
+                    document.get("index_data_ready") is True
+                    and document.get("index_data_token")
+                )
+                else IndexCreationMode.ONLINE.value
+            )
+            return self.reconcile(target, connection, mode=mode)
 
     def create(self, target, sql, origin, *, adopt=False, require_concurrently=False):
         definition = parse_index(sql)

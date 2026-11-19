@@ -3,6 +3,7 @@ from contextvars import ContextVar
 from functools import wraps
 from uuid import uuid4
 
+from ddp_lib.enums import IndexCreationMode
 from ddp_lib.index_metadata import begin_data, data_committed
 from ddp_lib.secondary_indexes import IndexRepairError
 
@@ -33,7 +34,7 @@ def guarded_data(registry_factory, kind, *, document_arg=0, execution_factory=No
                         result = function(*args, **kwargs)
                         if restore_after:
                             committed(registry, kind, document)
-                            registry.reconcile(target)
+                            registry.reconcile(target, mode=IndexCreationMode.POST_LOAD.value)
                         return result
                     finally:
                         _attempts.reset(context)
