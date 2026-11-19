@@ -1,5 +1,10 @@
 from enum import Enum
 
+class IndexCreationMode(Enum):
+    ONLINE = 'online'        # CREATE INDEX CONCURRENTLY; the table stays writable
+    POST_LOAD = 'post_load'  # CREATE INDEX after a data commit; can block writes
+
+
 class UserRoleEnum(Enum):
     ADMIN = 'ADMIN'
     DATA_OWNER = 'DATA_OWNER'
