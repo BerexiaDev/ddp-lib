@@ -248,22 +248,44 @@ class DatasetIndexes:
         # Reload the dataset, but keep the schema and table already resolved
         # for this job. A later write of those names may still be in memory.
         from dataclasses import replace
+
         document = target.collection.find_one({"_id": target.id})
         schema_field = "data_mart_schema" if target.kind == "REFERENCE" else "schema"
-        if (not document or document.get("table_name") != target.table
-                or document.get(schema_field, target.schema) != target.schema):
+        if (
+            not document
+            or document.get("table_name") != target.table
+            or document.get(schema_field, target.schema) != target.schema
+        ):
             raise IndexConflict("Dataset identity changed; retry")
         target = replace(target, document=document)
         try:
             if connection is None:
                 with self.guard(target) as connection:
                     return self.reconcile(target, connection, finish=finish)
-            return lifecycle.reconcile(target.collection, target.id, target.schema, target.table,
-                self.factory(target), connection, source_entries=self.source_policy(target, connection), finish=finish)
+            return lifecycle.reconcile(
+                target.collection,
+                target.id,
+                target.schema,
+                target.table,
+                self.factory(target),
+                connection,
+                source_entries=self.source_policy(target, connection),
+                finish=finish,
+            )
         except Exception as exc:
-            target.collection.update_one({"_id": target.id,
-                "index_data_token": document.get("index_data_token")}, {"$set": {
-                    "index_repair_pending": True, "index_repair_error": str(exc), "indexes_applied": False}})
+            target.collection.update_one(
+                {
+                    "_id": target.id,
+                    "index_data_token": document.get("index_data_token"),
+                },
+                {
+                    "$set": {
+                        "index_repair_pending": True,
+                        "index_repair_error": str(exc),
+                        "indexes_applied": False,
+                    }
+                },
+            )
             raise
 
     def create(self, target, sql, origin, *, adopt=False, require_concurrently=False):
