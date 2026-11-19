@@ -28,43 +28,142 @@ class Dataset:
 
 
 def source_entries(dataset, physical=()):
-    """Persisted source policy has deterministic identities, separate from intent."""
-    if dataset.kind != 'REFERENCE':
+    """Turn a reference table's saved index list into indexes DDP should keep.
+
+    The name can change. The identity is the column list, in order, plus unique or not.
+    An older index can be kept only when it has the same columns and is not a secondary index.
+    An older index without a DDP stamp still needs an explicit adoption.
+    """
+    # Populations and cleaned tables do not use this list.
+    if dataset.kind != "REFERENCE":
         return []
-    result = []
-    names = set()
-    for policy in dataset.document.get('source_indexes') or []:
-        if policy.get('primary'):
+    policies = dataset.document.get("source_indexes")
+    if policies is None:
+        policies = []
+    if not isinstance(policies, list):
+        raise ValueError("Source index policy must be a list; review source metadata")
+    candidates, names = {}, {}
+    # Names already saved as secondary indexes. A source index must not reuse one.
+    excluded = {e["index_name"] for e in dataset.document.get("secondary_indexes", [])}
+    for policy in policies:
+        if not isinstance(policy, dict):
+            raise ValueError("Source index definition must be an object")
+        # source_idxtype only records the old Informix index type. It is not used here.
+        unsupported = set(policy) - {
+            "name",
+            "columns",
+            "unique",
+            "primary",
+            "source_idxtype",
+        }
+        if unsupported:
+            raise ValueError(
+                "Unsupported source index fields: " + ", ".join(sorted(unsupported))
+            )
+        if any(
+            key in policy and not isinstance(policy[key], bool)
+            for key in ("unique", "primary")
+        ):
+            raise ValueError("Source index unique/primary flags must be booleans")
+        # PostgreSQL already owns the primary key.
+        if policy.get("primary"):
             continue
-        columns = policy.get('columns') or []
-        if not columns or any(not isinstance(c, str) or not c for c in columns):
-            raise ValueError('Source index policy has unsupported keys; review source metadata')
-        unique = bool(policy.get('unique'))
-        slug = lambda s: re.sub('_+', '_', re.sub('[^a-z0-9_]+', '_', s.lower())).strip('_')
-        name = 'idx_' + '_'.join([slug(dataset.schema), slug(dataset.table)] + [slug(c) for c in columns])
+        columns = policy.get("columns")
+        if (
+            not isinstance(columns, list)
+            or not columns
+            or any(not isinstance(c, str) or not c.strip() for c in columns)
+        ):
+            raise ValueError(
+                "Source index policy has unsupported keys; review source metadata"
+            )
+        for column in columns:
+            quote(column)  # Check the column name. Do not change its text.
+        unique = bool(policy.get("unique"))
+        
+        # Build a lowercase index name: idx_<schema>_<table>_<columns>.
+        slug = lambda s: re.sub("_+", "_", re.sub("[^a-z0-9_]+", "_", s.lower())).strip(
+            "_"
+        )
+        name = "idx_" + "_".join(
+            [slug(dataset.schema), slug(dataset.table)] + [slug(c) for c in columns]
+        )
         if unique:
-            name += '_uniq'
+            name += "_uniq"
         identity = json.dumps([dataset.kind, str(dataset.id), columns, unique])
-        if len(name.encode()) > 63:
-            name = name[:49] + '_' + sha256(identity.encode()).hexdigest()[:12]
-        if name in names:
-            raise IndexConflict('Source index names collide; review source policy')
-        names.add(name)
-        sql = ('CREATE ' + ('UNIQUE ' if unique else '') + 'INDEX ' + quote(name)
-               + ' ON ' + quote(dataset.schema) + '.' + quote(dataset.table)
-               + ' (' + ', '.join(quote(c) for c in columns) + ')')
-        excluded = {e['index_name'] for e in dataset.document.get('secondary_indexes', [])}
+        candidates[identity] = (name, columns, unique)
+        names.setdefault(name, set()).add(identity)
+    result = []
+    used = set()
+    for identity, (name, columns, unique) in candidates.items():
+        # PostgreSQL allows 63 bytes. Shared short names get a fixed ending too.
+        if len(name.encode()) > 63 or len(names[name]) > 1:
+            name = name[:49] + "_" + sha256(identity.encode()).hexdigest()[:12]
+        sql = (
+            "CREATE "
+            + ("UNIQUE " if unique else "")
+            + "INDEX "
+            + quote(name)
+            + " ON "
+            + quote(dataset.schema)
+            + "."
+            + quote(dataset.table)
+            + " ("
+            + ", ".join(quote(c) for c in columns)
+            + ")"
+        )
+        entry = {
+            "id": "source:" + sha256(identity.encode()).hexdigest(),
+            "index_name": name,
+            "sql": sql,
+            "desired_state": "present",
+            "adopt": False,
+            "revision": 1,
+        }
         definition = parse_index(sql)
-        candidates = [p for p in physical if p.index_name not in excluded and not p.primary
-                      and not p.constraint_owned and lifecycle.catalog_signature(p, definition) == definition.signature]
-        actual = next((p for p in physical if p.index_name == name), None)
-        if actual is None and candidates:
-            actual = sorted(candidates, key=lambda p: (not p.valid, p.index_name))[0]
+        if name in excluded:
+            raise IndexConflict(
+                f"Source index name {name!r} is already owned by secondary intent"
+            )
+        # Keep an existing index only when the columns match and it is not a constraint.
+        # A DDP stamp is accepted only when this same source entry owns it.
+        matches = [
+            p
+            for p in physical
+            if p.index_name not in excluded | used
+            and not p.primary
+            and not p.constraint_owned
+            and (p.schema, p.table) == (dataset.schema, dataset.table)
+            and lifecycle.catalog_signature(p, definition) == definition.signature
+            and (
+                not any(
+                    line.startswith("[ddp-index:v1:")
+                    for line in (p.comment or "").splitlines()
+                )
+                or lifecycle.owns(entry, p)
+            )
+        ]
+        # Use the new name when it exists. Otherwise use a ready older index with the same columns.
+        actual = next(
+            iter(
+                sorted(
+                    matches,
+                    key=lambda p: (
+                        p.index_name != name,
+                        not (p.valid and p.ready),
+                        p.index_name,
+                    ),
+                )
+            ),
+            None,
+        )
         if actual:
             name = actual.index_name
             sql = definition.render(name=name, concurrently=False)
-        result.append({'id': 'source:' + sha256(identity.encode()).hexdigest(), 'index_name': name,
-            'sql': sql, 'desired_state': 'present', 'adopt': False, 'revision': 1})
+        if name in used:
+            raise IndexConflict("Source index names collide; review source policy")
+        used.add(name)
+        result.append(dict(entry, index_name=name, sql=sql))
     return result
 
 
@@ -137,26 +236,56 @@ class DatasetIndexes:
             physical = list_indexes(cursor, target.schema, target.table)
         return source_entries(target, physical)
 
+    def validate_source_policy(self, target, connection):
+        """Reject unsupported saved keys before the data writer changes live data."""
+        entries = source_entries(target)
+        # Check definitions on an empty temporary table, without touching live rows.
+        with connection.cursor() as cursor:
+            for entry in entries:
+                lifecycle.canonical_signature(cursor, parse_index(entry['sql']), target.schema, target.table)
+
     def reconcile(self, target, connection=None, *, finish=True):
-        # Keep the already resolved KAN-11 identity across lease expiry after a
-        # reserved SQL commit; ordinary identity backfill may still be buffered.
+        # Reload the dataset, but keep the schema and table already resolved
+        # for this job. A later write of those names may still be in memory.
         from dataclasses import replace
+
         document = target.collection.find_one({"_id": target.id})
         schema_field = "data_mart_schema" if target.kind == "REFERENCE" else "schema"
-        if (not document or document.get("table_name") != target.table
-                or document.get(schema_field, target.schema) != target.schema):
+        if (
+            not document
+            or document.get("table_name") != target.table
+            or document.get(schema_field, target.schema) != target.schema
+        ):
             raise IndexConflict("Dataset identity changed; retry")
         target = replace(target, document=document)
         try:
             if connection is None:
                 with self.guard(target) as connection:
                     return self.reconcile(target, connection, finish=finish)
-            return lifecycle.reconcile(target.collection, target.id, target.schema, target.table,
-                self.factory(target), connection, source_entries=self.source_policy(target, connection), finish=finish)
+            return lifecycle.reconcile(
+                target.collection,
+                target.id,
+                target.schema,
+                target.table,
+                self.factory(target),
+                connection,
+                source_entries=self.source_policy(target, connection),
+                finish=finish,
+            )
         except Exception as exc:
-            target.collection.update_one({"_id": target.id,
-                "index_data_token": document.get("index_data_token")}, {"$set": {
-                    "index_repair_pending": True, "index_repair_error": str(exc), "indexes_applied": False}})
+            target.collection.update_one(
+                {
+                    "_id": target.id,
+                    "index_data_token": document.get("index_data_token"),
+                },
+                {
+                    "$set": {
+                        "index_repair_pending": True,
+                        "index_repair_error": str(exc),
+                        "indexes_applied": False,
+                    }
+                },
+            )
             raise
 
     def create(self, target, sql, origin, *, adopt=False, require_concurrently=False):
