@@ -83,7 +83,7 @@ class DatasetIndexes:
         collection = self.database[KINDS[kind]]
         doc = collection.find_one({'_id': dataset_id})
         if not doc:
-            raise LookupError('Dataset not found')
+            raise LookupError(f'Index target dataset not found: {kind} {dataset_id!r}')
         if kind == 'REFERENCE' and reference_schema and not doc.get('data_mart_schema'):
             doc['data_mart_schema'] = reference_schema
         schema = self.resolve_reference(doc) if kind == 'REFERENCE' else doc.get('schema')
@@ -108,13 +108,20 @@ class DatasetIndexes:
         targets = {}
         for field, kind in DEPENDENCIES.items():
             for identifier in document.get(field) or []:
+                # Legacy extraction stored unresolved names as str(None).
+                if identifier in (None, 'None'):
+                    continue
                 target = self.get(kind, identifier)
                 targets[(kind, identifier)] = target
         return list(targets.values())
 
     def population_targets(self, population_id):
         target = self.get('POPULATION', population_id)
-        return [target] + self.inputs(target.document)
+        return [target] + [
+            dependency
+            for dependency in self.inputs(target.document)
+            if (dependency.kind, dependency.id) != (target.kind, target.id)
+        ]
 
     def resolve(self, schema, table, allowed):
         matches = [d for d in allowed if (d.schema, d.table) == (schema, table)]
