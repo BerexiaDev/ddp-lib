@@ -274,6 +274,12 @@ def _error_text(errors):
 
 def _reconcile_snapshot(collection, dataset_id, schema, table, connection,
                         concurrently, source_entries, finish):
+    """Make this table's indexes match the saved list.
+
+    Source indexes run first, then secondary indexes. Stop if the saved list
+    changes. On success, mark the dataset verified. On failure, keep the
+    repair flag and name the index that failed.
+    """        
     doc = collection.find_one({"_id": dataset_id})
     if not doc:
         raise LookupError("Index target dataset does not exist")

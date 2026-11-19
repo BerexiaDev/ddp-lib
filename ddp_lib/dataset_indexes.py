@@ -245,8 +245,8 @@ class DatasetIndexes:
                 lifecycle.canonical_signature(cursor, parse_index(entry['sql']), target.schema, target.table)
 
     def reconcile(self, target, connection=None, *, finish=True):
-        # Keep the already resolved KAN-11 identity across lease expiry after a
-        # reserved SQL commit; ordinary identity backfill may still be buffered.
+        # Reload the dataset, but keep the schema and table already resolved
+        # for this job. A later write of those names may still be in memory.
         from dataclasses import replace
         document = target.collection.find_one({"_id": target.id})
         schema_field = "data_mart_schema" if target.kind == "REFERENCE" else "schema"
