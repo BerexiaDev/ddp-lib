@@ -8,7 +8,7 @@ from ddp_lib.index_sql import parse_index
 DATASET_COLLECTIONS = frozenset({'references', 'populations', 'cleaned_tables'})
 PROTECTED = frozenset({'_id', 'secondary_indexes', 'secondary_indexes_revision',
     'index_repair_pending', 'index_repair_error', 'index_data_ready',
-    'index_data_token', 'index_repair_stage'})
+    'index_data_token', 'index_repair_stage', 'index_reload'})
 DEFAULTS = {'secondary_indexes': [], 'secondary_indexes_revision': 0,
             'index_repair_pending': False, 'index_repair_error': None}
 

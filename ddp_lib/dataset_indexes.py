@@ -81,7 +81,7 @@ def source_entries(dataset, physical=()):
         for column in columns:
             quote(column)  # Check the column name. Do not change its text.
         unique = bool(policy.get("unique"))
-        
+
         # Build a lowercase index name: idx_<schema>_<table>_<columns>.
         slug = lambda s: re.sub("_+", "_", re.sub("[^a-z0-9_]+", "_", s.lower())).strip(
             "_"
@@ -161,6 +161,28 @@ def source_entries(dataset, physical=()):
         if actual:
             name = actual.index_name
             sql = definition.render(name=name, concurrently=False)
+        else:
+            # Temporary removal must not forget a previously bound source name.
+            # Current policy identities win: this cannot resurrect deleted policy.
+            recovery = dataset.document.get("index_reload") or {}
+            if (recovery.get("schema"), recovery.get("table")) == (
+                dataset.schema,
+                dataset.table,
+            ):
+                saved = next(
+                    (e for e in recovery.get("sources", []) if e["id"] == entry["id"]),
+                    None,
+                )
+                if (
+                    saved
+                    and parse_index(saved["sql"]).signature == definition.signature
+                ):
+                    name = saved["index_name"]
+                    sql = definition.render(name=name, concurrently=False)
+        if name in excluded:
+            raise IndexConflict(
+                "Recovered source index name is owned by secondary intent"
+            )
         if name in used:
             raise IndexConflict("Source index names collide; review source policy")
         used.add(name)
@@ -251,6 +273,17 @@ class DatasetIndexes:
         with connection.cursor() as cursor:
             for entry in entries:
                 lifecycle.canonical_signature(cursor, parse_index(entry['sql']), target.schema, target.table)
+
+    def prepare_reload(self, target, connection, token):
+        """Prepare temporary removal on the caller's publication transaction.
+
+        The data writer already holds the dataset guard. Rollback must cover
+        these DROPs, the replacement rows, and its SQL publication receipt.
+        """
+        from ddp_lib.reload_indexes import prepare_reload
+
+        with self.guard(target):
+            return prepare_reload(self, target, connection, token)
 
     def reconcile(self, target, connection=None, *, finish=True, mode=IndexCreationMode.ONLINE.value):
         """Verify indexes online, or restore them in a post-load maintenance window.

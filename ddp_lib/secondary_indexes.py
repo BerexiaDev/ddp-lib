@@ -228,6 +228,7 @@ def reconcile(
     finish=True,
 ):
     if connection is None:
+        initial = collection.find_one({'_id': dataset_id}) or {}
         try:
             with dataset_session(
                 connection_factory, collection.full_name, dataset_id, schema, table
@@ -245,7 +246,7 @@ def reconcile(
                 )
         except Exception as exc:
             collection.update_one(
-                {"_id": dataset_id},
+                {"_id": dataset_id, "index_data_token": initial.get('index_data_token')},
                 {
                     "$set": {
                         "index_repair_pending": True,
@@ -347,6 +348,8 @@ def _reconcile_snapshot(collection, dataset_id, schema, table, connection,
             except Exception as exc:
                 errors.append({"error": str(exc)})
     latest = collection.find_one({"_id": dataset_id}) or {}
+    if latest.get('index_data_token') != doc.get('index_data_token'):
+        errors.append({'error': 'Data checkpoint belongs to a newer attempt'})
     if latest.get("source_indexes") != doc.get("source_indexes"):
         errors.append(
             {"error": "Source index policy changed during reconciliation; retry"}
@@ -357,7 +360,7 @@ def _reconcile_snapshot(collection, dataset_id, schema, table, connection,
         )
     if errors:
         collection.update_one(
-            {"_id": dataset_id},
+            {"_id": dataset_id, "index_data_token": doc.get('index_data_token')},
             {
                 "$set": {
                     "index_repair_pending": True,
@@ -375,7 +378,7 @@ def _reconcile_snapshot(collection, dataset_id, schema, table, connection,
         query = {
             "_id": dataset_id,
             "secondary_indexes_revision": expected_revision(latest),
-            "index_data_token": latest.get("index_data_token"),
+            "index_data_token": doc.get("index_data_token"),
             "source_indexes": latest.get("source_indexes", {"$exists": False}),
         }
         changed = collection.update_one(
