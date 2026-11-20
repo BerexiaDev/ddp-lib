@@ -3,6 +3,7 @@
 from dataclasses import asdict, dataclass
 from hashlib import sha256
 import json
+import os
 from uuid import uuid4
 
 from ddp_lib.index_sql import parse_index, quote
@@ -287,8 +288,8 @@ def _reconcile_snapshot(collection, dataset_id, schema, table, connection,
     errors = []
     applied = 0
     with connection.cursor() as cursor:
-        cursor.execute("SET lock_timeout = %s", ("5s",))
-        cursor.execute("SET statement_timeout = %s", ("30min",))
+        cursor.execute("SET lock_timeout = %s", (os.getenv("INDEX_LOCK_TIMEOUT", "5s"),))
+        cursor.execute("SET statement_timeout = %s", (os.getenv("INDEX_STATEMENT_TIMEOUT", "30min"),))
         source_names = {e["index_name"] for e in source_entries}
         for entry in list(source_entries) + entries:
             source = entry in source_entries
