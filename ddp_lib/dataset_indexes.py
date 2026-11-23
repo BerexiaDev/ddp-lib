@@ -13,6 +13,7 @@ from ddp_lib.postgres_indexes import advisory_lock, dataset_session, inspect_ind
 
 KINDS = {'REFERENCE': 'references', 'POPULATION': 'populations', 'CLEANED_TABLE': 'cleaned_tables'}
 DEPENDENCIES = {'tables_ids': 'REFERENCE', 'population_ids': 'POPULATION', 'cleaned_table_ids': 'CLEANED_TABLE'}
+_ANY_DATA_TOKEN = object()
 
 
 @dataclass
@@ -345,10 +346,12 @@ class DatasetIndexes:
             )
             raise
 
-    def repair(self, target):
+    def repair(self, target, *, expected_token=_ANY_DATA_TOKEN):
         """Retry committed data in post-load mode; manual repair stays online."""
         with self.guard(target) as connection:
             document = target.collection.find_one({"_id": target.id}) or {}
+            if expected_token is not _ANY_DATA_TOKEN and document.get('index_data_token') != expected_token:
+                raise lifecycle.IndexRepairSuperseded("This repair is outdated. Indexes were not changed because a newer data load owns the table.")
             if document.get("index_data_ready") is False:
                 raise lifecycle.IndexRepairError(
                     "The current data attempt has not committed; resume its data job"
