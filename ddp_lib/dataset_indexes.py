@@ -406,6 +406,11 @@ class DatasetIndexes:
         Existing physical objects still require explicit, verified adoption.
         Legacy arrays never authorize taking over an unstamped catalog object.
         """
+        # I06 preserves the arrays as evidence, but a reviewed cutover must not
+        # turn excluded/missing legacy choices into a later hidden CREATE.
+        document = self.database['populations'].find_one({'_id': population_id})
+        if document and document.get('legacy_indexes_retired') is True:
+            return
         targets = self.population_targets(population_id)
         population = targets[0]
         docs = list(population.document.get('query_indexes') or [])
