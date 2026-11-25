@@ -3,6 +3,7 @@
 from dataclasses import asdict, dataclass
 from hashlib import sha256
 import json
+import os
 from uuid import uuid4
 
 from ddp_lib.index_sql import parse_index, quote
@@ -18,6 +19,7 @@ from ddp_lib.postgres_indexes import (
     dataset_session,
     inspect_index,
     list_indexes,
+    index_ready,
     stamp,
     drop,
 )
@@ -41,9 +43,10 @@ class IndexRepairError(RuntimeError):
 
 
 def catalog_signature(physical, definition):
+    # Compare index definitions independently of their names.
     signature = parse_index(physical.definition).signature
-    # PostgreSQL prints ONLY for every partitioned parent. indisvalid proves
-    # all required child indexes are attached for a non-ONLY request.
+    # PostgreSQL prints ONLY for every partitioned parent. Full-tree readiness
+    # is checked separately; catalog rendering must not change saved intent.
     if physical.relation_kind == "p":
         signature["only"] = definition.only
     return signature
@@ -192,8 +195,9 @@ def apply_entry(cursor, entry, schema, table, *, concurrently=True):
         stamp(cursor, physical, receipt(entry, physical))
     elif entry.get("adopt"):
         stamp(cursor, physical, receipt(entry, physical))
-    if not physical.valid or not physical.ready:
-        raise IndexRepairError("Index is not valid and ready")
+    # Report success only when the index and all its partitions are ready.
+    if not index_ready(cursor, physical):
+        raise IndexRepairError("Index or partition tree is not valid and ready; attachment review required")
     signature = catalog_signature(physical, definition)
     if expected is not None and signature != expected:
         raise IndexConflict(
@@ -224,6 +228,7 @@ def reconcile(
     finish=True,
 ):
     if connection is None:
+        initial = collection.find_one({'_id': dataset_id}) or {}
         try:
             with dataset_session(
                 connection_factory, collection.full_name, dataset_id, schema, table
@@ -241,7 +246,7 @@ def reconcile(
                 )
         except Exception as exc:
             collection.update_one(
-                {"_id": dataset_id},
+                {"_id": dataset_id, "index_data_token": initial.get('index_data_token')},
                 {
                     "$set": {
                         "index_repair_pending": True,
@@ -271,6 +276,12 @@ def _error_text(errors):
 
 def _reconcile_snapshot(collection, dataset_id, schema, table, connection,
                         concurrently, source_entries, finish):
+    """Make this table's indexes match the saved list.
+
+    Source indexes run first, then secondary indexes. Stop if the saved list
+    changes. On success, mark the dataset verified. On failure, keep the
+    repair flag and name the index that failed.
+    """        
     doc = collection.find_one({"_id": dataset_id})
     if not doc:
         raise LookupError("Index target dataset does not exist")
@@ -278,8 +289,8 @@ def _reconcile_snapshot(collection, dataset_id, schema, table, connection,
     errors = []
     applied = 0
     with connection.cursor() as cursor:
-        cursor.execute("SET lock_timeout = %s", ("5s",))
-        cursor.execute("SET statement_timeout = %s", ("30min",))
+        cursor.execute("SET lock_timeout = %s", (os.getenv("INDEX_LOCK_TIMEOUT", "5s"),))
+        cursor.execute("SET statement_timeout = %s", (os.getenv("INDEX_STATEMENT_TIMEOUT", "30min"),))
         source_names = {e["index_name"] for e in source_entries}
         for entry in list(source_entries) + entries:
             source = entry in source_entries
@@ -337,6 +348,8 @@ def _reconcile_snapshot(collection, dataset_id, schema, table, connection,
             except Exception as exc:
                 errors.append({"error": str(exc)})
     latest = collection.find_one({"_id": dataset_id}) or {}
+    if latest.get('index_data_token') != doc.get('index_data_token'):
+        errors.append({'error': 'Data checkpoint belongs to a newer attempt'})
     if latest.get("source_indexes") != doc.get("source_indexes"):
         errors.append(
             {"error": "Source index policy changed during reconciliation; retry"}
@@ -347,7 +360,7 @@ def _reconcile_snapshot(collection, dataset_id, schema, table, connection,
         )
     if errors:
         collection.update_one(
-            {"_id": dataset_id},
+            {"_id": dataset_id, "index_data_token": doc.get('index_data_token')},
             {
                 "$set": {
                     "index_repair_pending": True,
@@ -365,7 +378,7 @@ def _reconcile_snapshot(collection, dataset_id, schema, table, connection,
         query = {
             "_id": dataset_id,
             "secondary_indexes_revision": expected_revision(latest),
-            "index_data_token": latest.get("index_data_token"),
+            "index_data_token": doc.get("index_data_token"),
             "source_indexes": latest.get("source_indexes", {"$exists": False}),
         }
         changed = collection.update_one(
@@ -394,6 +407,8 @@ def listing(collection, dataset_id, schema, table, connection, source_entries=()
     sources = {e["index_name"]: e for e in source_entries}
     with connection.cursor() as cursor:
         physical = {p.index_name: p for p in list_indexes(cursor, schema, table)}
+        # Show the same readiness in the UI that reconciliation checks.
+        readiness = {name: index_ready(cursor, p) for name, p in physical.items()}
     result = []
     for name in sorted(set(entries) | set(sources) | set(physical)):
         entry, actual = entries.get(name), physical.get(name)
@@ -410,11 +425,11 @@ def listing(collection, dataset_id, schema, table, connection, source_entries=()
             classification=kind,
             index_repair_pending=bool(doc.get("index_repair_pending")),
             index_repair_error=doc.get("index_repair_error"),
-            physical_ready=bool(actual and actual.valid and actual.ready),
+            physical_ready=readiness.get(name, False),
             physical_state=(
                 "missing"
                 if actual is None
-                else "ready" if actual.valid and actual.ready else "invalid"
+                else "ready" if readiness[name] else "invalid"
             ),
             can_delete=kind == "secondary" and (actual is None or owns(entry, actual)),
         )

@@ -3,6 +3,7 @@ from contextvars import ContextVar
 from functools import wraps
 from uuid import uuid4
 
+from ddp_lib.enums import IndexCreationMode
 from ddp_lib.index_metadata import begin_data, data_committed
 from ddp_lib.secondary_indexes import IndexRepairError
 
@@ -19,11 +20,13 @@ def guarded_data(registry_factory, kind, *, document_arg=0, execution_factory=No
             entered = False
             try:
                 target = registry.get(kind, document.id)
-                with registry.guard(target):
+                with registry.guard(target) as connection:
                     entered = True
                     execution = execution_factory() if execution_factory else None
                     if execution:
                         execution.job.assert_owned()
+                    # Stop invalid saved policies before starting the data write.
+                    registry.validate_source_policy(target, connection)
                     token = execution.job.attempt_id if execution else uuid4().hex
                     begin_data(target.collection, target.id, token,
                                owner=execution.job.attempt_id if execution else None)
@@ -33,7 +36,7 @@ def guarded_data(registry_factory, kind, *, document_arg=0, execution_factory=No
                         result = function(*args, **kwargs)
                         if restore_after:
                             committed(registry, kind, document)
-                            registry.reconcile(target)
+                            registry.reconcile(target, mode=IndexCreationMode.POST_LOAD.value)
                         return result
                     finally:
                         _attempts.reset(context)

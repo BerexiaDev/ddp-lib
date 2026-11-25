@@ -55,6 +55,35 @@ def list_indexes(cursor, schema, table):
     return [inspect_index(cursor, schema, name) for name, in cursor.fetchall()]
 
 
+def index_ready(cursor, physical):
+    """Verify an index and every attached index covering its partition tree."""
+    # A ready parent alone does not prove that all its partitions are ready.
+    if not physical or not physical.valid or not physical.ready:
+        return False
+    if physical.relation_kind != 'p':
+        return True
+    # pg_get_indexdef renders ON ONLY even for a complete partitioned index.
+    # Compare definitions separately and require coverage/readiness at every
+    # level, including intermediate partitioned relations and empty branches.
+    cursor.execute('''WITH RECURSIVE
+        tables(oid) AS (
+            SELECT indrelid FROM pg_index WHERE indexrelid=%s
+            UNION ALL
+            SELECT h.inhrelid FROM pg_inherits h JOIN tables t ON h.inhparent=t.oid
+        ), indexes(oid) AS (
+            SELECT %s::oid
+            UNION ALL
+            SELECT h.inhrelid FROM pg_inherits h JOIN indexes i ON h.inhparent=i.oid
+        )
+        SELECT EXISTS (SELECT 1 FROM tables) AND NOT EXISTS (
+            SELECT 1 FROM tables t LEFT JOIN (
+                SELECT x.* FROM pg_index x JOIN indexes i ON i.oid=x.indexrelid
+            ) x ON x.indrelid=t.oid
+            WHERE x.indexrelid IS NULL OR NOT x.indisvalid OR NOT x.indisready OR NOT x.indislive
+        )''', (physical.oid, physical.oid))
+    return bool(cursor.fetchone()[0])
+
+
 def lock_id(key):
     """Turn a text key into the number PostgreSQL uses for an advisory lock."""
     # The same key always hashes to the same signed 64-bit number.
