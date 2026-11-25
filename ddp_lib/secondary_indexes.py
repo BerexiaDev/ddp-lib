@@ -42,6 +42,10 @@ class IndexRepairError(RuntimeError):
         self.result = result
 
 
+class IndexRepairSuperseded(IndexRepairError):
+    """A queued repair belongs to a data version that has been replaced."""
+
+
 def catalog_signature(physical, definition):
     # Compare index definitions independently of their names.
     signature = parse_index(physical.definition).signature
