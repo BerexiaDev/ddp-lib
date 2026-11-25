@@ -97,3 +97,11 @@ the database lifecycle through both API and Sync.
 Run `python -m unittest discover -s tests -p test_index_creation_modes.py -v`
 with `QUEUE_TEST_POSTGRES_DSN` and `QUEUE_TEST_MONGO_URI` pointing to disposable
 databases for I04 old-snapshot, invalid-owned-index, mode and timeout acceptance.
+
+`ddp_lib.dataset_indexes.DatasetIndexes` is the canonical dataset-owned registry.
+Its dependency enumeration ignores only legacy null and exact `"None"` entries,
+deduplicates by dataset type/ID, and keeps the population's own target first.
+Missing real IDs raise `LookupError` with the dataset type and ID; callers must
+repair the dependency rather than silently discard it. Enumeration does not
+rewrite stored arrays. Run `python -m unittest discover -s tests -p
+test_population_dependencies.py -v` for the I05 contracts without databases.
