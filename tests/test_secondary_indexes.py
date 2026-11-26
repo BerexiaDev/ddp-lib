@@ -325,6 +325,28 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaises(self.life.IndexRepairError): manager.reconcile(target)
         self.assertIsNone(self.physical('historic_source').comment)
 
+    def test_listing_is_available_while_dataset_lock_is_held(self):
+        """A refresh or repair holding the dataset lock must not make the list fail with 409."""
+        from ddp_lib.dataset_indexes import DatasetIndexes
+        from types import SimpleNamespace
+        self.collection.delete_many({})
+        self.db.references.insert_one({'_id': 'ref', 'data_mart_schema': self.schema,
+            'table_name': 'data', 'source_indexes': []})
+        manager = DatasetIndexes(self.db, lambda schema: SimpleNamespace(get_connection=self.connect),
+                                 lambda doc: doc['data_mart_schema'])
+        target = manager.get('REFERENCE', 'ref')
+        from ddp_lib.postgres_indexes import IndexLockBusy, advisory_lock
+        # Another session (like a refresh worker) holds this dataset's lock.
+        other = self.connect()
+        other.autocommit = True
+        try:
+            with advisory_lock(other, f'ddp-index:v1:dataset:{target.collection.full_name}:{target.id}'):
+                self.assertEqual(manager.listing(target), [])
+                with self.assertRaises(IndexLockBusy):
+                    manager.delete(target, 'idx')
+        finally:
+            other.close()
+
     def test_duplicate_physical_metadata_owners_block_lifecycle(self):
         from ddp_lib.dataset_indexes import DatasetIndexes
         self.db.references.insert_one({'_id':'other', 'data_mart_schema':self.schema, 'table_name':'data'})
