@@ -403,9 +403,21 @@ class DatasetIndexes:
         return {'index': entry, **result.to_dict()}
 
     def listing(self, target):
-        with self.guard(target) as connection:
+        """Read-only view of the dataset's indexes.
+
+        It takes no advisory lock, so the list stays available (instead of failing with
+        IndexLockBusy) while a refresh, reload or repair holds the dataset lock. Rows
+        then show the catalog state at read time, such as a missing or invalid index.
+        """
+        connection = self.factory(target)()
+        if connection is None:
+            raise ConnectionError('Unable to connect to the datamart')
+        try:
+            connection.autocommit = True
             return lifecycle.listing(target.collection, target.id, target.schema, target.table,
                                      connection, self.source_policy(target, connection))
+        finally:
+            connection.close()
 
     def register_legacy_population(self, population_id):
         """Convert requests to target ownership once; an existing tombstone wins.
