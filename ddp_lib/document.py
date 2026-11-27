@@ -1,3 +1,5 @@
+from ddp_lib.index_metadata import DATASET_COLLECTIONS, DEFAULTS, editable_fields, dataset_update
+from copy import deepcopy
 import inject
 from flask_pymongo import PyMongo
 from flask import g
@@ -33,12 +35,19 @@ class Document:
     def save(self):
         if not self._id:
             self._id = generate_id()
-        self._id = self.db().save(self.to_dict())
+        if self.__TABLE__ in DATASET_COLLECTIONS:
+            self.db().update_one({"_id": self._id}, dataset_update(
+                editable_fields(self.__TABLE__, self.to_dict())), upsert=True)
+        else:
+            self._id = self.db().save(self.to_dict())
         return self
 
     def save_all(self, items, **kwargs):
         kwargs = kwargs or {}
         items = [{"_id": generate_id(), **item, **kwargs} for item in items]
+        if self.__TABLE__ in DATASET_COLLECTIONS:
+            items = [dict(editable_fields(self.__TABLE__, item), _id=item["_id"],
+                          **deepcopy(DEFAULTS)) for item in items]
         self.db().insert_many(items)
         return items
 
@@ -81,7 +90,9 @@ class Document:
             cls().db().delete_many(query)
 
     def update(self, data: dict):
-        self.db().update_one({"_id": self._id}, {"$set": data})
+        fields = editable_fields(self.__TABLE__, data)
+        if fields:
+            self.db().update_one({"_id": self._id}, {"$set": fields})
         # for k, v in data.items():
         #     self.__setattr__(k, v)
         # return self

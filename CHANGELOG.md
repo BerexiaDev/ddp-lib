@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.3.0 - 2026-11-27
+
+Dataset index lifecycle for the KAN-20 epic (KAN-21 to KAN-27). New runtime
+dependencies: `pglast>=7.23,<8` and `psycopg2-binary>=2.9.9,<3`.
+
+- Persist dataset-owned secondary index intent in Mongo (revision, desired
+  state, status, origin, parsed signature) before any DDL, protect it from
+  ordinary metadata writes and keep deletion tombstones (KAN-21).
+- Parse and render index SQL with pglast in `ddp_lib.index_sql`; move PostgreSQL
+  index handling into `ddp_lib.postgres_indexes`, so ddp-lib no longer depends
+  on ddp-connectors.
+- Reconcile saved source-index policies without runtime rediscovery (KAN-22).
+- Ignore legacy null population dependency placeholders and report missing
+  dataset IDs (KAN-23).
+- Add online and post-load index creation modes for committed-data
+  restoration (KAN-24).
+- Prepare indexes transactionally around bulk reloads, with attempt-bound
+  tokens for crash recovery (KAN-25).
+- Separate index-repair queue identities and fence repair tokens so repairs run
+  safely alongside refresh jobs (KAN-26).
+- Add a reviewed index inventory and metadata-only migration, and retire the
+  legacy replay path (KAN-27).
+- `DatasetIndexes.listing()` takes no advisory lock, so listing stays available
+  during a refresh; `list_indexes` skips an index dropped mid-read and retries
+  catalog races on autocommit connections.
+- `token_required` keeps its 503 response but now logs the exception.
+
 ## 0.2.3 - 2026-11-02
 
 - Release the consolidated library from `main` with updated package metadata.

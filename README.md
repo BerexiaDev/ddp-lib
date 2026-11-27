@@ -58,12 +58,50 @@ failure tests. Each database test owns a unique schema.
 
 ## Population indexes
 
-`ddp_lib.population_indexes` provides the index identity, restoration and ANALYZE
-helpers used by Core API and Sync. Callers supply their population document and
-connector factory; the module does not import either service's application code.
-PostgreSQL operations require psycopg2 in the consuming service. Importing the
-module and parsing index identities do not require the database driver.
+Core API and Sync use `ddp_lib.dataset_indexes`, `secondary_indexes`,
+`index_metadata` and `index_hooks` to save and restore dataset indexes.
+PostgreSQL catalog and session helpers live in `ddp_lib.postgres_indexes`.
+`population_indexes` is only for older identity helpers.
+
+Import `IndexCreationMode` from `ddp_lib.enums`. Pass the string value,
+not the enum member:
+
+`DatasetIndexes.reconcile(target, mode=IndexCreationMode.ONLINE.value)`
+
+This is the default. Ordinary tables and materialized views use
+`CREATE INDEX CONCURRENTLY`.
+
+After the data job commits, call
+`reconcile(target, mode=IndexCreationMode.POST_LOAD.value)`.
+That uses a normal `CREATE INDEX` and can block writes on the table.
+Use it only in a maintenance window. Post-load does not create a
+checkpoint; it fails if none exists.
+
+`repair(target)` uses post-load only when a committed checkpoint is
+already there. Manual repair without one stays online. An unfinished
+data job must finish first. Online CREATE still uses `CONCURRENTLY`
+even if an older checkpoint exists.
+
+Partitioned parent tables always use ordinary DDL. Their child indexes
+must be valid and ready. DROP and ownership rules are the same in both
+modes.
+
+Each connection, including one you pass in, sets `INDEX_LOCK_TIMEOUT`
+(default `5s`) and `INDEX_STATEMENT_TIMEOUT` (default `30min`) before
+DDL. Use PostgreSQL duration syntax. A timeout keeps the saved request
+and does not mark the data job as successful.
 
 Run `python -m unittest discover -s tests -p test_population_indexes.py -v` for
 the identity contracts. Core's `ddp-sync/tests/test_population_indexes.py` covers
 the database lifecycle through both API and Sync.
+Run `python -m unittest discover -s tests -p test_index_creation_modes.py -v`
+with `QUEUE_TEST_POSTGRES_DSN` and `QUEUE_TEST_MONGO_URI` pointing to disposable
+databases for I04 old-snapshot, invalid-owned-index, mode and timeout acceptance.
+
+`ddp_lib.dataset_indexes.DatasetIndexes` is the canonical dataset-owned registry.
+Its dependency enumeration ignores only legacy null and exact `"None"` entries,
+deduplicates by dataset type/ID, and keeps the population's own target first.
+Missing real IDs raise `LookupError` with the dataset type and ID; callers must
+repair the dependency rather than silently discard it. Enumeration does not
+rewrite stored arrays. Run `python -m unittest discover -s tests -p
+test_population_dependencies.py -v` for the I05 contracts without databases.

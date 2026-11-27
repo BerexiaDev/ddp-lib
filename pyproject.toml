@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ddp-lib"
-version = "0.2.3"
+version = "0.3.0"
 description = "Canonical DeepKube shared application library"
 readme = "README.md"
 license = "MIT"
@@ -17,6 +17,8 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
+    "pglast>=7.23,<8",
+    "psycopg2-binary>=2.9.9,<3",
     "cryptography==44.0.2",
     "flask-restx==1.2.0",
     "inject==5.0.0",
