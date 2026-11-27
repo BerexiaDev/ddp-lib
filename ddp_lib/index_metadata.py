@@ -110,6 +110,10 @@ def record_result(collection, dataset_id, index_id, revision, result):
             entry.pop('last_error', None)
             # Adoption authorizes one checked object, not all future replacements.
             entry['adopt'] = False
+        elif result.get('status') == 'released':
+            # A withdrawn, never-completed adoption: the index stays unmanaged
+            # and the adopt marker stays, so it is never reported as a conflict.
+            entry.pop('last_error', None)
         return True
     return bool(mutate(collection, dataset_id, change))
 
