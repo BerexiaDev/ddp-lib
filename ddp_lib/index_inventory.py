@@ -619,6 +619,22 @@ def current_owner(item, database):
     return owner
 
 
+def _reload_unfinished(doc):
+    """True while a bulk reload may still hold temporarily removed indexes.
+
+    ddp-lib 0.3.0 left the snapshot in place after a successful reload, so a
+    snapshot for the current data token whose indexes are verified is finished.
+    """
+    reload = doc.get("index_reload")
+    if not reload:
+        return False
+    return not (
+        reload.get("token") == doc.get("index_data_token")
+        and doc.get("index_repair_stage") == "verified"
+        and not doc.get("index_repair_pending")
+    )
+
+
 def validate_import(item, database, connection):
     owner = current_owner(item, database)
     doc = database[item["collection"]].find_one({"_id": item["dataset_id"]})
@@ -642,7 +658,7 @@ def validate_import(item, database, connection):
         item["index_name"],
     ):
         raise InventoryError("inventory_sql_identity_changed")
-    if doc.get("index_data_ready") is False or doc.get("index_reload"):
+    if doc.get("index_data_ready") is False or _reload_unfinished(doc):
         raise InventoryError("incomplete_data_attempt_requires_recovery")
     relation = relation_inventory(connection, item["schema"], item["table"])
     reason = exclusion(item, [owner], relation)

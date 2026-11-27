@@ -329,7 +329,11 @@ def _reconcile_snapshot(collection, dataset_id, schema, table, connection,
                         raise IndexConflict("Index intent changed during DDL; retry")
                     applied += 1
             except Exception as exc:
-                errors.append({"index_name": entry["index_name"], "error": str(exc)})
+                errors.append({
+                    "index_name": entry["index_name"],
+                    "error": str(exc),
+                    "code": getattr(exc, "pgcode", None),
+                })
                 if not source:
                     try:
                         record_result(
@@ -393,7 +397,10 @@ def _reconcile_snapshot(collection, dataset_id, schema, table, connection,
                     "index_repair_error": None,
                     "indexes_applied": True,
                     "index_repair_stage": "verified",
-                }
+                },
+                # The reload snapshot only protects indexes while they are
+                # temporarily removed; once verified it is no longer needed.
+                "$unset": {"index_reload": ""},
             },
         )
         if not changed.matched_count:

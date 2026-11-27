@@ -191,6 +191,44 @@ def source_entries(dataset, physical=()):
     return result
 
 
+# SQLSTATE classes a retry cannot fix: data exceptions (22), integrity
+# violations such as duplicate keys for UNIQUE (23), syntax/undefined objects (42).
+PERMANENT_ERROR_CLASSES = ('22', '23', '42')
+# Not permanent: the table may not exist yet, or a concurrent request created
+# the same name (left to the normal conflict handling).
+NOT_PERMANENT_CODES = {'42P01', '42P07', '42710'}
+
+
+def _is_permanent(code):
+    return bool(code) and code[:2] in PERMANENT_ERROR_CLASSES and code not in NOT_PERMANENT_CODES
+
+
+def _first_line(exc):
+    return (str(exc).strip().splitlines() or [type(exc).__name__])[0]
+
+
+def _validate_definition(cursor, definition, target):
+    """Raise ValueError when PostgreSQL rejects the definition on an empty copy."""
+    try:
+        lifecycle.canonical_signature(cursor, definition, target.schema, target.table)
+    except Exception as exc:
+        code = getattr(exc, 'pgcode', None)
+        if _is_permanent(code):
+            raise ValueError(f"Invalid index definition: {_first_line(exc)}") from exc
+        if code == '42P01':
+            return  # Dataset not materialized yet; the first refresh builds it.
+        raise
+
+
+def _permanent_failure(exc, index_name):
+    """The error text when this index failed permanently in a reconcile, else None."""
+    result = getattr(exc, 'result', None)
+    for item in getattr(result, 'errors', ()) or ():
+        if item.get('index_name') == index_name and _is_permanent(item.get('code')):
+            return (item.get('error') or '').strip().splitlines()[0] if item.get('error') else 'permanent error'
+    return None
+
+
 class DatasetIndexes:
     def __init__(self, database, connector_factory, resolve_reference):
         self.database = database
@@ -383,6 +421,10 @@ class DatasetIndexes:
             names = {e['index_name'] for e in self.source_policy(target, connection)}
             with connection.cursor() as cursor:
                 physical = inspect_index(cursor, target.schema, definition.index_name)
+                if physical is None:
+                    # Reject a definition PostgreSQL can never build (unknown
+                    # column, bad expression) before any intent is saved.
+                    _validate_definition(cursor, definition, target)
         if definition.index_name in names:
             raise IndexConflict('Source-managed indexes are read-only')
         if physical and (physical.primary or physical.constraint_owned):
@@ -390,7 +432,24 @@ class DatasetIndexes:
                 f"Constraint-owned index '{definition.index_name}' is read-only"
             )
         entry = save_intent(target.collection, target.id, target.schema, target.table, sql, origin, adopt)
-        result = self.reconcile(target)
+        try:
+            result = self.reconcile(target)
+        except lifecycle.IndexRepairError as exc:
+            failure = _permanent_failure(exc, definition.index_name)
+            if failure is None:
+                raise  # Transient: keep the intent so a repair can finish it.
+            # The build failed for a reason a retry cannot fix (for example
+            # UNIQUE on duplicate data). Withdraw this request and drop the
+            # invalid index it left, instead of keeping an intent that blocks
+            # every later refresh of the dataset.
+            delete_intent(target.collection, target.id, target.schema, definition.index_name)
+            try:
+                self.reconcile(target)
+            except lifecycle.IndexRepairError:
+                pass  # Other entries may still be pending; that is their own state.
+            raise ValueError(
+                f"Index {definition.index_name} could not be built: {failure}"
+            ) from exc
         return {'index': entry, **result.to_dict()}
 
     def delete(self, target, name):
