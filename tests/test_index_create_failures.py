@@ -122,6 +122,39 @@ class CreateFailureDatabaseTests(unittest.TestCase):
         [entry] = self.entries()
         self.assertEqual(entry["desired_state"], "present")
 
+    def test_withdrawing_an_unadopted_import_keeps_the_index_unmanaged(self):
+        from ddp_lib.index_metadata import save_intent
+
+        self.cursor.execute(f'CREATE INDEX dba_idx ON "{self.schema}".data (amount)')
+        # What the I06 import writes: an adopt request, no DDL, no ownership stamp yet.
+        save_intent(self.db.references, "reference", self.schema, "data",
+                    f'CREATE INDEX dba_idx ON "{self.schema}".data (amount)',
+                    {"type": "inventory"}, True)
+        self.manager.delete(self.target(), "dba_idx")  # must not raise
+        [entry] = self.entries()
+        self.assertEqual((entry["desired_state"], entry["status"]), ("absent", "released"))
+        physical = self.physical("dba_idx")
+        self.assertIsNotNone(physical)  # left exactly as before the import
+        self.assertNotIn("ddp-index", physical.comment or "")
+        self.assertFalse(self.db.references.find_one({"_id": "reference"}).get("index_repair_pending"))
+        # Later reconciles (every refresh runs one) keep ignoring it.
+        for _ in range(2):
+            self.assertTrue(self.manager.reconcile(self.target()).ready)
+        self.assertIsNotNone(self.physical("dba_idx"))
+        # If the index is later dropped by hand, the entry ends as a normal deletion.
+        self.cursor.execute(f'DROP INDEX "{self.schema}".dba_idx')
+        self.manager.reconcile(self.target())
+        [entry] = self.entries()
+        self.assertEqual((entry["status"], entry.get("adopt")), ("deleted", False))
+
+    def test_an_adopted_and_stamped_index_is_still_dropped(self):
+        self.cursor.execute(f'CREATE INDEX dba_idx ON "{self.schema}".data (amount)')
+        self.manager.create(self.target(), f'CREATE INDEX dba_idx ON "{self.schema}".data (amount)',
+                            {"type": "rule", "id": "r1"}, adopt=True)
+        self.assertIn("ddp-index", self.physical("dba_idx").comment or "")
+        self.manager.delete(self.target(), "dba_idx")
+        self.assertIsNone(self.physical("dba_idx"))
+
     def test_verified_reconcile_clears_the_reload_snapshot(self):
         self.create(f'CREATE INDEX CONCURRENTLY ok_id ON "{self.schema}".data (id)')
         self.db.references.update_one(

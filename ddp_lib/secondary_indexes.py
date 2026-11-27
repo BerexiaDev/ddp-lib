@@ -145,6 +145,21 @@ def apply_entry(cursor, entry, schema, table, *, concurrently=True):
             "schema": schema,
             "table": table,
         }
+    if (
+        entry["desired_state"] == "absent"
+        and entry.get("adopt")
+        and physical
+        and (physical.schema, physical.table) == (schema, table)
+        and not owns(entry, physical)
+    ):
+        # Adoption was requested (for example by the I06 inventory import) but
+        # never completed, so DDP never owned this index. Withdrawing the
+        # request leaves the index exactly as it was before: unmanaged.
+        # "released" keeps the adopt marker, so later reconciles recognise
+        # the entry instead of reporting a conflict. (An absent entry without
+        # an adopt request still reports the unmanaged-name conflict for
+        # review, as I01-G requires.)
+        return {"status": "released", "schema": schema, "table": table}
     validate_existing(cursor, entry, physical, schema, table)
     if entry["desired_state"] == "absent":
         if physical:
