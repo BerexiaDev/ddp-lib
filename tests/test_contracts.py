@@ -108,6 +108,26 @@ class AuthContracts(AuthFixture):
             self.assertEqual(token_required([])(lambda: None)(),
                              ({"message": "Permission denied"}, 403))
 
+    def test_unexpected_route_error_keeps_503_and_is_logged(self):
+        from loguru import logger
+
+        messages = []
+        sink = logger.add(messages.append, level="ERROR")
+        token = User.encode_auth_token("user-123")
+
+        def broken():
+            raise RuntimeError("route failure")
+
+        try:
+            with self.app.test_request_context("/protected", headers={"Authorization": "Bearer " + token}):
+                self.assertEqual(token_required()(broken)(),
+                                 ({"message": "Authentication service is unavailable."}, 503))
+        finally:
+            logger.remove(sink)
+        self.assertEqual(len(messages), 1)
+        self.assertIn("/protected", messages[0])
+        self.assertIn("RuntimeError: route failure", messages[0])
+
     def test_default_missing_and_invalid_token_responses(self):
         with self.app.test_request_context("/protected"):
             self.assertEqual(token_required()(lambda: None)(), ({"message": "Token is missing"}, 401))

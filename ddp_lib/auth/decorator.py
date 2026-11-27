@@ -1,5 +1,6 @@
 from functools import wraps
 from flask import request
+from loguru import logger
 from werkzeug.exceptions import HTTPException
 from ddp_lib.auth.auth_helper import AuthHelper
 
@@ -57,6 +58,9 @@ def token_required(roles=None):
             except HTTPException:
                 raise
             except Exception:
+                # The response stays unchanged, but the failure is logged: this also
+                # catches errors raised by the route itself, which would otherwise vanish.
+                logger.exception("Request to {} failed inside token_required", request.path)
                 return {"message": "Authentication service is unavailable."}, 503
         return decorated_function
     return decorator

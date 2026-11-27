@@ -46,13 +46,50 @@ def inspect_index(cursor, schema, name):
     return PhysicalIndex(*row) if row else None
 
 
-def list_indexes(cursor, schema, table):
-    """Return every index on this table, in name order."""
-    cursor.execute('''SELECT i.relname FROM pg_index x
-        JOIN pg_class i ON i.oid=x.indexrelid JOIN pg_class t ON t.oid=x.indrelid
-        JOIN pg_namespace n ON n.oid=t.relnamespace
-        WHERE n.nspname=%s AND t.relname=%s ORDER BY i.relname''', (schema, table))
-    return [inspect_index(cursor, schema, name) for name, in cursor.fetchall()]
+# SQLSTATEs a concurrent DROP can cause while the catalog is being read: an internal
+# "could not open relation" / "cache lookup failed" error, or an undefined table/object.
+CATALOG_RACE_CODES = frozenset({'XX000', '42P01', '42704'})
+
+
+def list_indexes(cursor, schema, table, *, attempts=5):
+    """Return every index on this table, in name order.
+
+    Each index is read with its own query, so a concurrent DROP (for example a
+    refresh's final publication swap) can remove one between reads. An index that
+    has gone is left out. On an autocommit connection each read retries a catalog
+    race error a few times; inside a transaction the error is raised, because the
+    transaction is already aborted.
+    """
+    def names():
+        cursor.execute('''SELECT i.relname FROM pg_index x
+            JOIN pg_class i ON i.oid=x.indexrelid JOIN pg_class t ON t.oid=x.indrelid
+            JOIN pg_namespace n ON n.oid=t.relnamespace
+            WHERE n.nspname=%s AND t.relname=%s ORDER BY i.relname''', (schema, table))
+        return [name for name, in cursor.fetchall()]
+
+    found = []
+    for name in _retry_catalog_race(cursor, attempts, names):
+        physical = _retry_catalog_race(cursor, attempts, lambda: inspect_index(cursor, schema, name))
+        if physical is not None:
+            found.append(physical)
+    return found
+
+
+def _retry_catalog_race(cursor, attempts, read):
+    """Run one catalog read, retrying it while a concurrent DROP races it."""
+    for attempt in range(attempts):
+        try:
+            return read()
+        except Exception as exc:
+            if attempt + 1 >= attempts or not _catalog_race(cursor, exc):
+                raise
+
+
+def _catalog_race(cursor, exc):
+    """True when a read failed because a concurrent DROP changed the catalog."""
+    connection = getattr(cursor, 'connection', None)
+    return (getattr(exc, 'pgcode', None) in CATALOG_RACE_CODES
+            and bool(getattr(connection, 'autocommit', False)))
 
 
 def index_ready(cursor, physical):
